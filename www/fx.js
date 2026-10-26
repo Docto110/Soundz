@@ -37,21 +37,33 @@ const FX = (() => {
       ],
       summary: p => ({ warm: 'Warm', crunch: 'Crunch', fuzz: 'Fuzz', bitcrush: 'Bitcrush' }[p.character] || 'Fuzz') + ' · ' + Math.round(p.drive * 100) + '%',
     },
+    speed: {
+      name: 'SPEED', kind: 'Tape speed', color: '#3fb86b',
+      // Like a tape machine: speed and pitch change together, no stretching.
+      // It acts on the whole sound, so it has no Mix.
+      noMix: true,
+      defaults: { speed: 1.5, tapestop: false, stopTime: 0.6 },
+      sliders: [
+        { k: 'speed', label: 'Speed', min: 0.25, max: 3, step: 0.01, log: true, fmt: v => v.toFixed(2) + '×' },
+        { k: 'stopTime', label: 'Stop time', min: 0.1, max: 2, step: 0.05, fmt: v => v.toFixed(2) + ' s', showIf: p => p.tapestop },
+      ],
+      toggles: [{ k: 'tapestop', label: 'Tape stop at the end' }],
+      summary: p => p.speed.toFixed(2) + '×' + (p.tapestop ? ' · tape stop' : ''),
+    },
   };
 
-  const SLOTS = 3;
+  const SLOTS = 5;   // most effects on one sound
 
   function create(type) {
     return { type, on: true, ...JSON.parse(JSON.stringify(TYPES[type].defaults)) };
   }
 
+  // A list of up to 5 effects, in order (older saves may have empty slots: dropped)
   function normalize(list) {
-    const out = [];
-    for (let i = 0; i < SLOTS; i++) {
-      const f = list && list[i];
-      out.push(f && TYPES[f.type] ? { ...TYPES[f.type].defaults, ...f } : null);
-    }
-    return out;
+    return (Array.isArray(list) ? list : [])
+      .filter(f => f && TYPES[f.type])
+      .slice(0, SLOTS)
+      .map(f => ({ ...TYPES[f.type].defaults, ...f }));
   }
 
   const active = list => normalize(list).filter(f => f && f.on);
@@ -190,11 +202,50 @@ const FX = (() => {
 
   const BUILD = { echo: buildEcho, space: buildSpace, load: buildLoad };
 
+  /* SPEED works on the tape itself (the playback rate), not as a node in the chain.
+     Several SPEED effects multiply. Returns { rate, stop } (stop = tape-stop seconds or 0). */
+  function speedOf(list) {
+    let rate = 1, stop = 0;
+    for (const f of active(list)) {
+      if (f.type !== 'speed') continue;
+      rate *= Math.max(0.25, Math.min(3, f.speed));
+      if (f.tapestop) stop = Math.max(stop, f.stopTime);
+    }
+    return { rate: Math.max(0.1, Math.min(6, rate)), stop };
+  }
+
+  /* Starts a buffer source playing [start, start+len] of the buffer at time t0, with
+     SPEED applied, and the fade envelope on `gain`. Returns the real playing time (s). */
+  function schedule(ctx, src, gain, t0, region, list) {
+    const { rate, stop } = speedOf(list);
+    const len = region.len;
+    // with tape stop, the slowdown eats rate*stop/2 seconds of tape at the end
+    const tapeForStop = stop ? Math.min(len, rate * stop / 2) : 0;
+    const steady = (len - tapeForStop) / rate;
+    const realLen = steady + (stop ? Math.min(stop, 2 * len / rate) : 0);
+    const pr = src.playbackRate;
+    pr.setValueAtTime(rate, t0);
+    if (stop) {
+      pr.setValueAtTime(rate, t0 + steady);
+      pr.linearRampToValueAtTime(0.01, t0 + realLen);
+    }
+    // fades are set in tape time; convert to real time
+    const fi = Math.min(region.fadeIn / rate, realLen), fo = Math.min(region.fadeOut / rate, realLen - fi);
+    const g = gain.gain;
+    g.setValueAtTime(fi > 0 ? 0 : 1, t0);
+    if (fi > 0) g.linearRampToValueAtTime(1, t0 + fi);
+    if (fo > 0) { g.setValueAtTime(1, t0 + realLen - fo); g.linearRampToValueAtTime(0, t0 + realLen); }
+    src.start(t0, region.start, len);
+    if (stop) src.stop(t0 + realLen + 0.01);
+    return { realLen, rate };
+  }
+
   // Chain: input -> fx1 -> fx2 -> fx3 -> output. Returns { input, output }.
   function chain(ctx, list) {
     const input = ctx.createGain(), output = ctx.createGain();
     let last = input;
     for (const f of active(list)) {
+      if (!BUILD[f.type]) continue;   // SPEED isn't a node; see schedule()
       try {
         const unit = BUILD[f.type](ctx, f);
         last.connect(unit.input);
@@ -205,5 +256,5 @@ const FX = (() => {
     return { input, output };
   }
 
-  return { TYPES, SLOTS, create, normalize, active, tailOf, chain };
+  return { TYPES, SLOTS, create, normalize, active, tailOf, chain, schedule, speedOf };
 })();

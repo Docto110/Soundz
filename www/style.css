@@ -657,3 +657,32 @@ body.editing .tile .tile-del {
   height: 48px; border-radius: 16px; border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
   background: transparent; color: var(--red); font: inherit; font-size: 15px; font-weight: 700;
 }
+
+/* Effects list: + Add effect */
+.fx-add {
+  flex: none; height: 52px; border-radius: 16px; border: 2px dashed var(--dash); background: transparent;
+  color: var(--fg); font: inherit; font-size: 15px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.fx-plus {
+  width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center; font-size: 20px; font-weight: 800; line-height: 1;
+}
+.fx-emptytop { display: flex; justify-content: space-between; align-items: center; }
+.fx-emptytop span { font-size: 13px; color: var(--muted); }
+.fx-cancel { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; height: 32px; }
+.fx-pick { flex-wrap: wrap; }
+.fx-pickbtn { flex: 1 1 40%; }
+.fx-full { margin: 4px 2px; font-size: 13px; color: var(--muted); text-align: center; }
+
+/* Drag to reorder effects */
+.fx-grip {
+  flex: none; width: 32px; height: 44px; margin-left: -6px; border: 0; background: transparent;
+  display: grid; place-items: center; touch-action: none; cursor: grab; color: var(--muted);
+}
+.fx-grip svg { width: 20px; height: 20px; fill: currentColor; }
+.fx-slot.dragging { position: relative; z-index: 5; box-shadow: 0 12px 30px rgba(0,0,0,.4); transition: none; }
+.fx-slot.shifting { transition: transform .18s ease; }
+@media (prefers-reduced-motion: reduce) { .fx-slot.shifting { transition: none; } }
+
+.fx-title { align-items: center; }

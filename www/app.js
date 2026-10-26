@@ -186,13 +186,6 @@ async function playSound(sound, opts = {}) {
     fx.output.connect(out).connect(master);
 
     const t0 = c.currentTime + 0.005;
-    const g = gain.gain;
-    g.setValueAtTime(r.fadeIn > 0 ? 0 : 1, t0);
-    if (r.fadeIn > 0) g.linearRampToValueAtTime(1, t0 + r.fadeIn);
-    if (r.fadeOut > 0) {
-      g.setValueAtTime(1, t0 + r.len - r.fadeOut);
-      g.linearRampToValueAtTime(0, t0 + r.len);
-    }
 
     const voice = { src, out };
     ringing.add(voice);
@@ -207,10 +200,10 @@ async function playSound(sound, opts = {}) {
       // free the effect nodes once the tail has rung out
       setTimeout(() => { ringing.delete(voice); try { out.disconnect(); } catch (_) {} }, (tail + 0.3) * 1000);
     };
-    src.start(t0, r.start, r.len);
+    const timing = FX.schedule(c, src, gain, t0, r, sound.fx);   // speed, fades, start
     if (window.onSoundPlayed) window.onSoundPlayed(sound);
     setPlayingClass(sound.id);
-    return { startedAt: t0, region: r };
+    return { startedAt: t0, region: r, rate: timing.rate, realLen: timing.realLen };
   } catch (e) {
     console.error(e);
     toast("Couldn't play that sound");
@@ -861,8 +854,9 @@ const editor = (() => {
     // Playhead
     if (preview) {
       const c = audioCtx();
-      const el = c.currentTime - preview.startedAt;
-      if (el >= 0 && el <= preview.region.len) {
+      // position on the tape: real time x speed (close enough during a tape stop)
+      const el = Math.min(preview.region.len, (c.currentTime - preview.startedAt) * (preview.rate || 1));
+      if (el >= 0 && c.currentTime - preview.startedAt <= (preview.realLen || preview.region.len)) {
         const px = tToX(preview.region.start + el);
         g.fillStyle = T.accent;
         g.fillRect(px - k, band, 2 * k, h - band);
@@ -1249,19 +1243,17 @@ async function renderSound(sound) {
   const buf = await getBuffer(sound);
   const r = regionOf(sound, buf);
   const sr = buf.sampleRate;
-  const total = r.len + FX.tailOf(sound.fx);
+  const sp = FX.speedOf(sound.fx);
+  const realLen = r.len / sp.rate + sp.stop;
+  const total = realLen + FX.tailOf(sound.fx);
   const off = new OfflineAudioContext(2, Math.max(1, Math.ceil(total * sr)), sr);
   const src = off.createBufferSource();
   src.buffer = buf;
   const gain = off.createGain();
-  const g = gain.gain;
-  g.setValueAtTime(r.fadeIn > 0 ? 0 : 1, 0);
-  if (r.fadeIn > 0) g.linearRampToValueAtTime(1, r.fadeIn);
-  if (r.fadeOut > 0) { g.setValueAtTime(1, r.len - r.fadeOut); g.linearRampToValueAtTime(0, r.len); }
   const fx = FX.chain(off, sound.fx);
   src.connect(gain).connect(fx.input);
   fx.output.connect(off.destination);
-  src.start(0, r.start, r.len);
+  FX.schedule(off, src, gain, 0, r, sound.fx);
   return off.startRendering();
 }
 
