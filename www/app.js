@@ -990,4 +990,26 @@ function openEditor(sound, o) { return editor.open(sound, o); }
     sounds = [];
   }
   render();
+  addStarterSounds();
 })();
+
+/* Default board: added once on first launch (deleting them keeps them gone) */
+const STARTERS = [
+  { file: 'starter/welcome.wav', name: 'Welcome to Soundz', color: '#3a8ee6' },
+];
+async function addStarterSounds() {
+  if (prefs.get('seeded', false)) return;
+  let order = 0, added = 0;
+  for (const st of STARTERS) {
+    try {
+      const res = await fetch(st.file);
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      // created = a tiny number so starters sit at the start of the board
+      if (await addSound(blob, st.name, { color: st.color, created: order++ })) added++;
+    } catch (e) { console.error(e); }
+  }
+  if (added) prefs.set('seeded', true);   // only mark done once they were really added
+  sounds.sort((a, b) => a.created - b.created);
+  render();
+}
