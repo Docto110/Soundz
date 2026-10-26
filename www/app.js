@@ -3,7 +3,7 @@
 /* ---------- Settings ---------- */
 const MAX_SOUND_S = 10;     // longest a sound on the board can be
 const TAP_MAX_MS = 500;     // released before this = play
-const DELETE_MS = 5000;     // hold this long = delete
+const HOLD_MENU_MS = 380;   // hold this long = Edit / Delete menu
 const MOVE_CANCEL_PX = 12;  // finger moved this far = it's a scroll, cancel
 const COLORS = [
   '#e8485c', '#f27a35', '#e9b52c', '#3fb86b', '#22a9a0',
@@ -255,11 +255,19 @@ function tileEl(id) {
 }
 
 let toastTimer;
-function toast(msg) {
-  toastEl.textContent = msg;
+// toast('Saved') or toast('Deleted', { action: 'Undo', onAction, ms })
+function toast(msg, opts = {}) {
+  toastEl.replaceChildren(document.createTextNode(msg));
+  if (opts.action) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'toast-action'; b.textContent = opts.action;
+    b.addEventListener('click', () => { toastEl.hidden = true; clearTimeout(toastTimer); opts.onAction && opts.onAction(); });
+    toastEl.append(b);
+  }
+  toastEl.classList.toggle('has-action', !!opts.action);
   toastEl.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2200);
+  toastTimer = setTimeout(() => { toastEl.hidden = true; }, opts.ms || 2200);
 }
 
 function render() {
@@ -306,8 +314,7 @@ function makeTile(sound) {
   el.className = 'tile';
   el.dataset.id = sound.id;
   el.style.setProperty('--c', sound.color);
-  el.style.setProperty('--hold', (DELETE_MS - TAP_MAX_MS) + 'ms');
-  el.innerHTML = '<span class="fill"></span><span class="trash"></span><span class="name"></span>';
+  el.innerHTML = '<span class="name"></span><span class="tile-del" aria-hidden="true"></span>';
   el.querySelector('.name').textContent = sound.name;
   const img = imageUrl(sound);
   if (img) {
@@ -315,73 +322,65 @@ function makeTile(sound) {
     el.style.backgroundImage = `linear-gradient(rgba(0,0,0,0) 40%, rgba(0,0,0,.6)), url("${img}")`;
   }
 
-  let downAt = 0, startX = 0, startY = 0, holdTimer = null, deleteTimer = null, active = false;
+  let downAt = 0, startX = 0, startY = 0, holdTimer = null, active = false, menuOpen = false, onDelBadge = false;
 
   function reset() {
     clearTimeout(holdTimer);
-    clearTimeout(deleteTimer);
-    holdTimer = deleteTimer = null;
+    holdTimer = null;
     active = false;
-    el.classList.remove('pressed', 'holding');
+    el.classList.remove('pressed');
   }
 
   el.addEventListener('pointerdown', e => {
     if (e.button !== undefined && e.button !== 0) return;
     active = true;
+    menuOpen = false;
+    // generous 46px touch area around the small delete badge in the corner
+    { const r = el.getBoundingClientRect(); onDelBadge = editMode && e.clientX - r.left < 46 && e.clientY - r.top < 46; }
     downAt = Date.now();
     startX = e.clientX; startY = e.clientY;
     el.classList.add('pressed');
     audioCtx(); // warm up audio on first touch
-    if (editMode) return; // in edit mode a tap just opens the sampler
+    if (editMode) return; // in edit mode a tap edits (or deletes, on the badge)
     holdTimer = setTimeout(() => {
       el.classList.remove('pressed');
-      el.classList.add('holding');
-      buzz(15);
-    }, TAP_MAX_MS);
-    deleteTimer = setTimeout(() => {
-      reset();
-      removeSound(sound);
-    }, DELETE_MS);
+      menuOpen = true;
+      holdMenu.open(el, sound);
+    }, HOLD_MENU_MS);
   });
-
-  function insideTile(x, y) {
-    const r = el.getBoundingClientRect();
-    const pad = 6; // a little forgiveness at the edges
-    return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
-  }
 
   el.addEventListener('pointermove', e => {
     if (!active) return;
-    if (el.classList.contains('holding')) {
-      // Already holding to delete: only cancel if the finger leaves the square
-      if (!insideTile(e.clientX, e.clientY)) reset();
-    } else if (Math.abs(e.clientX - startX) > MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > MOVE_CANCEL_PX) {
-      // Early on, a real swipe means the user is scrolling
-      reset();
+    if (menuOpen) { holdMenu.hover(e.clientX, e.clientY); return; }   // sliding onto an option
+    if (Math.abs(e.clientX - startX) > MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > MOVE_CANCEL_PX) {
+      reset();   // a real swipe means the user is scrolling
     }
   });
 
-  // While holding to delete, stop the page from scrolling (which would cancel the hold)
+  // Once the menu is up, keep the page from scrolling while the finger slides to an option
   el.addEventListener('touchmove', e => {
-    if (active && el.classList.contains('holding') && e.cancelable) e.preventDefault();
+    if (active && menuOpen && e.cancelable) e.preventDefault();
   }, { passive: false });
 
-  el.addEventListener('pointerup', () => {
+  el.addEventListener('pointerup', e => {
     if (!active) return;
     const held = Date.now() - downAt;
+    const wasMenu = menuOpen;
     reset();
-    if (editMode) openEditor(sound);
-    else if (held < TAP_MAX_MS) playSound(sound);
+    menuOpen = false;
+    if (wasMenu) { holdMenu.release(e.clientX, e.clientY); return; }
+    if (editMode) { if (onDelBadge) removeSound(sound); else openEditor(sound); }
+    else if (held < HOLD_MENU_MS) playSound(sound);
   });
 
-  el.addEventListener('pointercancel', reset);
+  el.addEventListener('pointercancel', () => { reset(); });
   el.addEventListener('contextmenu', e => e.preventDefault());
 
   return el;
 }
 
 async function removeSound(sound) {
-  buzz(80);
+  buzz(60);
   stopSound(sound.id);
   const el = tileEl(sound.id);
   if (el) el.classList.add('gone');
@@ -389,7 +388,92 @@ async function removeSound(sound) {
   buffers.delete(sound.id);
   sounds = sounds.filter(s => s.id !== sound.id);
   setTimeout(render, 250);
+  toast(`Deleted "${sound.name}"`, {
+    action: 'Undo',
+    ms: 5000,
+    onAction: async () => {
+      await db.put(sound);
+      sounds.push(sound);
+      sounds.sort((a, b) => a.created - b.created);
+      render();
+      buzz(20);
+    },
+  });
 }
+
+/* ---------- Hold menu: Edit / Delete bubbles around a held sound ---------- */
+const holdMenu = (() => {
+  const layer = document.getElementById('holdMenu');
+  const btnEdit = document.getElementById('hmEdit');
+  const btnDel = document.getElementById('hmDelete');
+  let sound = null, tileNode = null, hot = null;
+
+  function place(tile) {
+    const r = tile.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const size = 64, dist = Math.max(r.width, r.height) / 2 + 30;
+    // bubbles fan out above the tile, or below it when it's near the top of the screen
+    const up = cy - dist - size > 40;
+    const ang = up ? [-125, -55] : [125, 55];
+    const pos = ang.map(a => {
+      let x = cx + Math.cos(a * Math.PI / 180) * dist - size / 2;
+      const y = cy + Math.sin(a * Math.PI / 180) * dist - size / 2;
+      x = Math.max(8, Math.min(window.innerWidth - size - 8, x));
+      return [x, y];
+    });
+    btnEdit.style.left = pos[0][0] + 'px'; btnEdit.style.top = pos[0][1] + 'px';
+    btnDel.style.left = pos[1][0] + 'px'; btnDel.style.top = pos[1][1] + 'px';
+  }
+
+  function hit(x, y) {
+    for (const b of [btnEdit, btnDel]) {
+      const r = b.getBoundingClientRect();
+      if (x >= r.left - 10 && x <= r.right + 10 && y >= r.top - 10 && y <= r.bottom + 10) return b;
+    }
+    return null;
+  }
+
+  function setHot(b) {
+    if (hot === b) return;
+    hot = b;
+    btnEdit.classList.toggle('hot', b === btnEdit);
+    btnDel.classList.toggle('hot', b === btnDel);
+    if (b) buzz(8);
+  }
+
+  function open(tile, s) {
+    sound = s; tileNode = tile;
+    tile.classList.add('lifted');
+    place(tile);
+    setHot(null);
+    layer.hidden = false;
+    buzz(25);
+  }
+
+  function close() {
+    layer.hidden = true;
+    if (tileNode) tileNode.classList.remove('lifted');
+    setHot(null);
+    tileNode = null;
+  }
+
+  function choose(b) {
+    const s = sound;
+    close();
+    if (b === btnEdit) openEditor(s);
+    else if (b === btnDel) removeSound(s);
+  }
+
+  // finger still down: highlight the option under it
+  function hover(x, y) { setHot(hit(x, y)); }
+  // finger lifted: on an option = do it; elsewhere = leave the menu open for a tap
+  function release(x, y) { const b = hit(x, y); if (b) choose(b); }
+
+  btnEdit.addEventListener('click', () => choose(btnEdit));
+  btnDel.addEventListener('click', () => choose(btnDel));
+  layer.addEventListener('pointerdown', e => { if (e.target === layer) close(); });
+  return { open, hover, release, close };
+})();
 
 async function addSound(blob, name, extra = {}) {
   const used = new Set(sounds.map(s => s.color));
