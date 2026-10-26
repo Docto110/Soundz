@@ -143,11 +143,24 @@ async function playSound(sound, opts = {}) {
   }
 }
 
+/* ---------- Talking to Android ----------
+   We don't bundle @capacitor/core, so use the bridge Capacitor injects:
+   window.Capacitor.nativePromise(plugin, method, options). */
+function isNativeApp() {
+  const C = window.Capacitor;
+  return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+}
+function nativePlugin(name) {
+  const C = window.Capacitor;
+  if (!isNativeApp() || typeof C.nativePromise !== 'function') return null;
+  return new Proxy({}, { get: (_, method) => method === 'then' ? undefined : (opts = {}) => C.nativePromise(name, String(method), opts) });
+}
+
 /* ---------- Haptics ---------- */
+const HapticsNative = nativePlugin('Haptics');
 function buzz(ms = 40) {
-  const H = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Haptics;
-  if (H) {
-    H.vibrate({ duration: ms }).catch(() => {});
+  if (HapticsNative) {
+    HapticsNative.vibrate({ duration: ms }).catch(() => { if (navigator.vibrate) navigator.vibrate(ms); });
   } else if (navigator.vibrate) {
     navigator.vibrate(ms);
   }
@@ -985,8 +998,7 @@ function openEditor(sound, o) { return editor.open(sound, o); }
    Native side (Android) keeps ready-to-play WAVs and an alarm that plays
    a random one every 20 minutes, even when the app is closed. */
 const DONT_MINUTES = 20;
-const DontNative = (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()
-  && window.Capacitor.registerPlugin) ? window.Capacitor.registerPlugin('Dont') : null;
+const DontNative = nativePlugin('Dont');
 const optDont = document.getElementById('optDont');
 const dontTest = document.getElementById('dontTest');
 const dontWarn = document.getElementById('dontWarn');
