@@ -126,7 +126,6 @@ public class DontReceiver extends BroadcastReceiver {
             : new Notification.Builder(c);
         b.setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
             .setContentTitle("DONT!")
-            .setContentText("Playing " + name)
             .setAutoCancel(true);
         if (pi != null) b.setContentIntent(pi);
         try { nm.notify(NOTIF_ID, b.build()); } catch (SecurityException ignored) {}

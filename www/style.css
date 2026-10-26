@@ -493,3 +493,8 @@ body.editing .tile.add { opacity: .35; pointer-events: none; }
   font: inherit; font-size: 13px; font-weight: 700;
 }
 .dont-box h4 { font-size: 26px; font-weight: 900; color: #ff4d5e; letter-spacing: .02em; }
+
+/* Buttons in the visualizer editor + dialogs take the light text color */
+.vsheet, .confirm-box { color: var(--fg); }
+.vsheet .chip, .confirm-box .btn.ghost, .vsheet .link.save { color: var(--fg); font-family: inherit; }
+.vsheet .chip[aria-pressed="true"] { color: var(--bg); }

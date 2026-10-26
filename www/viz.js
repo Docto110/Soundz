@@ -430,9 +430,9 @@ const beatChip = document.createElement('button');
 beatChip.className = 'chip test'; beatChip.type = 'button';
 beatChip.innerHTML = '<span class="live"></span><span class="t">Play beat</span>';
 beatChip.addEventListener('click', () => beatOn ? stopBeat() : startBeat());
-testRow.appendChild(beatChip);
+// (demo beat removed: you test with your own sounds)
 function rebuildTestRow() {
-  while (testRow.children.length > 1) testRow.lastChild.remove();
+  testRow.replaceChildren();
   for (const s of sounds) {
     const ch = document.createElement('button');
     ch.className = 'chip'; ch.type = 'button'; ch.style.setProperty('--c', s.color);
