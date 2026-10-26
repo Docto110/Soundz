@@ -23,7 +23,9 @@ jobs:
 
       - name: Install Piper and a voice
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
           pip install "piper-tts==1.2.0"
+          python -m piper --help | head -5
           mkdir -p /tmp/voice && cd /tmp/voice
           base=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium
           curl -sSLf -o v.onnx "$base/en_US-amy-medium.onnx"
@@ -34,7 +36,7 @@ jobs:
           mkdir -p www/starter
           while IFS='|' read -r name text; do
             [ -z "$name" ] && continue
-            echo "$text" | piper --model /tmp/voice/v.onnx --output_file "/tmp/voice/$name.raw.wav"
+            echo "$text" | python -m piper --model /tmp/voice/v.onnx --output_file "/tmp/voice/$name.raw.wav"
             # trim silence at the ends and normalize loudness
             ffmpeg -loglevel error -y -i "/tmp/voice/$name.raw.wav" \
               -af "silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse,loudnorm=I=-14:TP=-1.5" \
