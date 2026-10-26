@@ -1,0 +1,8 @@
+{
+  "appId": "com.docto110.soundz",
+  "appName": "Soundz",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#111114"
+  }
+}

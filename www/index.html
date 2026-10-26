@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#111114">
+  <title>Soundz</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="grid" class="grid" aria-label="Sounds"></main>
+
+  <!-- Add sheet: record or pick a file -->
+  <div id="sheet" class="overlay" hidden>
+    <div class="sheet">
+      <button id="btnRecord" class="sheet-btn">
+        <span class="dot"></span> Record
+      </button>
+      <button id="btnPick" class="sheet-btn">
+        <span class="file-icon"></span> Choose file
+      </button>
+      <button id="btnCancel" class="sheet-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Recording screen -->
+  <div id="rec" class="overlay rec" hidden>
+    <div class="rec-box">
+      <div class="rec-pulse"></div>
+      <div id="recTime" class="rec-time">0:00</div>
+      <button id="btnStop" class="rec-stop" aria-label="Stop and save"></button>
+      <button id="btnRecCancel" class="sheet-cancel">Discard</button>
+    </div>
+  </div>
+
+  <input id="fileInput" type="file" accept="audio/*" hidden>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

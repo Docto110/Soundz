@@ -1,0 +1,14 @@
+{
+  "name": "soundz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A tiny soundboard app",
+  "dependencies": {
+    "@capacitor/android": "latest",
+    "@capacitor/core": "latest",
+    "@capacitor/haptics": "latest"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "latest"
+  }
+}
