@@ -71,6 +71,7 @@
         </span>
         <input id="optDont" type="checkbox" class="switch">
       </label>
+      <button id="btnFactory" class="factory-btn" type="button">Reset everything</button>
       <button id="btnSettingsClose" class="sheet-cancel">Close</button>
     </div>
   </div>
@@ -217,6 +218,17 @@
     <button type="button" id="hmDelete" class="hm-btn danger" aria-label="Delete sound">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
     </button>
+  </div>
+
+  <div class="confirm" id="resetWarn" hidden>
+    <div class="confirm-box" role="alertdialog" aria-labelledby="rwH" aria-describedby="rwP">
+      <h4 id="rwH">Reset everything?</h4>
+      <p id="rwP">All your sounds, pictures, effects and settings will be erased, and Soundz starts fresh like it was just installed. This can't be undone.</p>
+      <div class="confirm-row">
+        <button class="btn ghost" id="resetNo">Keep my stuff</button>
+        <button class="btn danger" id="resetYes">Erase all</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>

@@ -36,6 +36,7 @@ const db = (() => {
     all: () => tx('readonly', s => s.getAll()),
     put: item => tx('readwrite', s => s.put(item)),
     del: id => tx('readwrite', s => s.delete(id)),
+    clear: () => tx('readwrite', s => s.clear()),
   };
 })();
 
@@ -1263,6 +1264,19 @@ async function renderSound(sound) {
   src.start(0, r.start, r.len);
   return off.startRendering();
 }
+
+/* ---------- Factory reset: back to a fresh install ---------- */
+document.getElementById('btnFactory').addEventListener('click', () => { document.getElementById('resetWarn').hidden = false; buzz(30); });
+document.getElementById('resetNo').addEventListener('click', () => { document.getElementById('resetWarn').hidden = true; });
+document.getElementById('resetYes').addEventListener('click', async () => {
+  for (const id of [...playing.keys()]) stopSound(id);
+  try { if (typeof DontNative !== 'undefined' && DontNative) { await DontNative.disable(); await DontNative.setSounds({ items: [] }); } } catch (_) {}
+  try { await db.clear(); } catch (e) { console.error(e); }
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('soundz')) localStorage.removeItem(k);
+  } catch (_) {}
+  location.reload();
+});
 
 /* ---------- DONT! mode ----------
    Native side (Android) keeps ready-to-play WAVs and an alarm that plays

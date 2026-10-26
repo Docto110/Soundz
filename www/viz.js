@@ -598,7 +598,20 @@ $('vReset').addEventListener('click', () => { S = { ...DEFAULT, style: S.style }
 
 /* ---------------- Hook into the app ---------------- */
 const vizWrap = $('vizWrap');
-vizWrap.addEventListener('click', () => { if (editMode && !sheetOpen) openSheet(); });
+vizWrap.addEventListener('click', () => {
+  if (sheetOpen) return;
+  if (editMode) { openSheet(); return; }
+  // Outside edit mode a tap cycles to the next style (keeping colors and the rest)
+  const i = STYLES.findIndex(x => x[0] === saved.style);
+  const [next, label] = STYLES[(i + 1) % STYLES.length];
+  saved = { ...saved, style: next };
+  try { localStorage.setItem('soundz-viz', JSON.stringify(saved)); } catch (_) {}
+  S = { ...saved };
+  vals = []; peaks = []; wavePts = null;
+  refresh();
+  buzz(10);
+  toast(label);
+});
 
 function applyVisibility() {
   vizWrap.hidden = !prefs.get('showViz', true);
