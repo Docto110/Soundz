@@ -1,0 +1,53 @@
+name: Make voice clips
+
+# Turns each line of voice/lines.txt ("file|text to say") into www/starter/<file>.wav
+# with the Piper text-to-speech voice, and commits the results.
+on:
+  push:
+    branches: [main]
+    paths: ['voice/**', '.github/workflows/voice.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  voice:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Piper and a voice
+        run: |
+          pip install "piper-tts==1.2.0"
+          mkdir -p /tmp/voice && cd /tmp/voice
+          base=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium
+          curl -sSLf -o v.onnx "$base/en_US-amy-medium.onnx"
+          curl -sSLf -o v.onnx.json "$base/en_US-amy-medium.onnx.json"
+
+      - name: Speak each line
+        run: |
+          mkdir -p www/starter
+          while IFS='|' read -r name text; do
+            [ -z "$name" ] && continue
+            echo "$text" | piper --model /tmp/voice/v.onnx --output_file "/tmp/voice/$name.raw.wav"
+            # trim silence at the ends and normalize loudness
+            ffmpeg -loglevel error -y -i "/tmp/voice/$name.raw.wav" \
+              -af "silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse,loudnorm=I=-14:TP=-1.5" \
+              -ar 44100 -ac 1 "www/starter/$name.wav"
+            echo "made www/starter/$name.wav"
+          done < voice/lines.txt
+          ls -la www/starter
+
+      - name: Commit clips
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add www/starter
+          git diff --cached --quiet && { echo "No changes"; exit 0; }
+          git commit -m "Voice clips from voice/lines.txt"
+          git push
