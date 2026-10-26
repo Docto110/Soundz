@@ -27,9 +27,9 @@ jobs:
           pip install "piper-tts==1.2.0"
           python -m piper --help | head -5
           mkdir -p /tmp/voice && cd /tmp/voice
-          base=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium
-          curl -sSLf -o v.onnx "$base/en_US-amy-medium.onnx"
-          curl -sSLf -o v.onnx.json "$base/en_US-amy-medium.onnx.json"
+          base=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/ryan/medium
+          curl -sSLf -o v.onnx "$base/en_US-ryan-medium.onnx"
+          curl -sSLf -o v.onnx.json "$base/en_US-ryan-medium.onnx.json"
 
       - name: Speak each line
         run: |
