@@ -52,4 +52,4 @@ jobs:
           git add www/starter
           git diff --cached --quiet && { echo "No changes"; exit 0; }
           git commit -m "Voice clips from voice/lines.txt"
-          git push
+          git pull --rebase origin main && git push
