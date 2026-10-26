@@ -8,7 +8,58 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <header class="topbar">
+    <span id="editHint" class="edit-hint" hidden>Tap a sound to edit it</span>
+    <button id="btnEdit" class="icon-btn" aria-label="Edit sounds"><span class="i-pencil"></span></button>
+    <button id="btnDone" class="done-btn" hidden>Done</button>
+    <button id="btnSettings" class="icon-btn" aria-label="Settings"><span class="i-gear"></span></button>
+  </header>
+
   <main id="grid" class="grid" aria-label="Sounds"></main>
+
+  <!-- Settings -->
+  <div id="settings" class="overlay" hidden>
+    <div class="sheet">
+      <div class="sheet-title">Settings</div>
+      <label class="row">
+        <span>
+          <span class="row-title">Overlap sounds</span>
+          <span class="row-sub">Tapping again layers a new copy instead of restarting</span>
+        </span>
+        <input id="optOverlap" type="checkbox" class="switch">
+      </label>
+      <button id="btnSettingsClose" class="sheet-cancel">Close</button>
+    </div>
+  </div>
+
+  <!-- Sampler -->
+  <div id="editor" class="editor" hidden>
+    <div class="ed-top">
+      <button id="edCancel" class="ed-link">Cancel</button>
+      <input id="edName" class="ed-name" maxlength="40" spellcheck="false" autocomplete="off">
+      <button id="edSave" class="ed-link ed-save">Save</button>
+    </div>
+
+    <div class="ed-wave-wrap">
+      <canvas id="edWave" class="ed-wave"></canvas>
+    </div>
+
+    <div class="ed-readout">
+      <div><span class="lbl">Start</span><span id="edStart">0.00s</span></div>
+      <div><span class="lbl">End</span><span id="edEnd">0.00s</span></div>
+      <div><span class="lbl">Length</span><span id="edLen">0.00s</span></div>
+      <div><span class="lbl">Fade in</span><span id="edFin">0ms</span></div>
+      <div><span class="lbl">Fade out</span><span id="edFout">0ms</span></div>
+    </div>
+
+    <div class="ed-help">Drag the bottom handles to trim. Drag the top squares to fade.</div>
+
+    <div class="ed-controls">
+      <button id="edZoom" class="ed-btn">Zoom</button>
+      <button id="edPlay" class="ed-play" aria-label="Play"><span class="i-play"></span></button>
+      <button id="edReset" class="ed-btn">Reset</button>
+    </div>
+  </div>
 
   <!-- Add sheet: record or pick a file -->
   <div id="sheet" class="overlay" hidden>

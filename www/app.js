@@ -41,7 +41,29 @@ const db = (() => {
 /* ---------- Audio ---------- */
 let ctx;
 const buffers = new Map();   // id -> AudioBuffer
-const playing = new Map();   // id -> AudioBufferSourceNode
+const playing = new Map();   // id -> Set of AudioBufferSourceNodes
+
+/* App settings (saved on the phone) */
+const prefs = (() => {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem('soundz-prefs') || '{}'); } catch (_) {}
+  return {
+    get: (k, d) => (k in p ? p[k] : d),
+    set: (k, v) => { p[k] = v; try { localStorage.setItem('soundz-prefs', JSON.stringify(p)); } catch (_) {} },
+  };
+})();
+
+/* Trim + fade settings for a sound, always valid for its buffer */
+function regionOf(sound, buf) {
+  const dur = buf.duration;
+  let start = Math.max(0, Math.min(sound.start || 0, dur));
+  let end = sound.end == null ? dur : Math.max(start, Math.min(sound.end, dur));
+  if (end - start < 0.01) { start = 0; end = dur; }
+  const len = end - start;
+  let fadeIn = Math.max(0, Math.min(sound.fadeIn || 0, len));
+  let fadeOut = Math.max(0, Math.min(sound.fadeOut || 0, len - fadeIn));
+  return { start, end, len, fadeIn, fadeOut };
+}
 
 function audioCtx() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -57,36 +79,56 @@ async function getBuffer(sound) {
   return buf;
 }
 
-function stopSound(id) {
-  const src = playing.get(id);
-  if (src) { try { src.stop(); } catch (_) {} }
-  playing.delete(id);
+function setPlayingClass(id) {
   const el = tileEl(id);
-  if (el) el.classList.remove('playing');
+  if (el) el.classList.toggle('playing', !!(playing.get(id) && playing.get(id).size));
 }
 
-async function playSound(sound) {
-  stopSound(sound.id); // tapping again restarts it
+function stopSound(id) {
+  const set = playing.get(id);
+  if (set) for (const src of set) { try { src.stop(); } catch (_) {} }
+  playing.delete(id);
+  setPlayingClass(id);
+}
+
+// Plays a sound with its trim + fades. `opts.overlap` decides whether
+// a new play layers on top or restarts it. Returns { startedAt, region }.
+async function playSound(sound, opts = {}) {
+  const overlap = opts.overlap != null ? opts.overlap : prefs.get('overlap', false);
+  if (!overlap) stopSound(sound.id);
   try {
     const c = audioCtx();
-    const buf = await getBuffer(sound);
+    const buf = opts.buffer || await getBuffer(sound);
+    const r = regionOf(sound, buf);
     const src = c.createBufferSource();
     src.buffer = buf;
-    src.connect(c.destination);
+    const gain = c.createGain();
+    src.connect(gain).connect(c.destination);
+
+    const t0 = c.currentTime + 0.005;
+    const g = gain.gain;
+    g.setValueAtTime(r.fadeIn > 0 ? 0 : 1, t0);
+    if (r.fadeIn > 0) g.linearRampToValueAtTime(1, t0 + r.fadeIn);
+    if (r.fadeOut > 0) {
+      g.setValueAtTime(1, t0 + r.len - r.fadeOut);
+      g.linearRampToValueAtTime(0, t0 + r.len);
+    }
+
+    if (!playing.has(sound.id)) playing.set(sound.id, new Set());
+    playing.get(sound.id).add(src);
     src.onended = () => {
-      if (playing.get(sound.id) === src) {
-        playing.delete(sound.id);
-        const el = tileEl(sound.id);
-        if (el) el.classList.remove('playing');
-      }
+      const set = playing.get(sound.id);
+      if (set) { set.delete(src); if (!set.size) playing.delete(sound.id); }
+      setPlayingClass(sound.id);
+      if (opts.onEnd) opts.onEnd();
     };
-    playing.set(sound.id, src);
-    src.start();
-    const el = tileEl(sound.id);
-    if (el) el.classList.add('playing');
+    src.start(t0, r.start, r.len);
+    setPlayingClass(sound.id);
+    return { startedAt: t0, region: r };
   } catch (e) {
     console.error(e);
     toast("Couldn't play that sound");
+    return null;
   }
 }
 
@@ -158,6 +200,7 @@ function makeTile(sound) {
     startX = e.clientX; startY = e.clientY;
     el.classList.add('pressed');
     audioCtx(); // warm up audio on first touch
+    if (editMode) return; // in edit mode a tap just opens the sampler
     holdTimer = setTimeout(() => {
       el.classList.remove('pressed');
       el.classList.add('holding');
@@ -195,7 +238,8 @@ function makeTile(sound) {
     if (!active) return;
     const held = Date.now() - downAt;
     reset();
-    if (held < TAP_MAX_MS) playSound(sound);
+    if (editMode) openEditor(sound);
+    else if (held < TAP_MAX_MS) playSound(sound);
   });
 
   el.addEventListener('pointercancel', reset);
@@ -363,6 +407,389 @@ document.getElementById('btnRecCancel').addEventListener('click', () => {
   if (recorder && recorder.state !== 'inactive') recorder.stop();
   else rec.hidden = true;
 });
+
+/* ---------- Edit mode + settings ---------- */
+let editMode = false;
+const btnEdit = document.getElementById('btnEdit');
+const btnDone = document.getElementById('btnDone');
+const btnSettings = document.getElementById('btnSettings');
+const editHint = document.getElementById('editHint');
+const settingsEl = document.getElementById('settings');
+const optOverlap = document.getElementById('optOverlap');
+
+function setEditMode(on) {
+  editMode = on;
+  document.body.classList.toggle('editing', on);
+  btnEdit.hidden = on;
+  btnSettings.hidden = on;
+  btnDone.hidden = !on;
+  editHint.hidden = !on;
+  if (on) {
+    for (const id of [...playing.keys()]) stopSound(id);
+    if (!sounds.length) { toast('Add a sound first'); setEditMode(false); }
+  }
+}
+btnEdit.addEventListener('click', () => setEditMode(true));
+btnDone.addEventListener('click', () => setEditMode(false));
+
+btnSettings.addEventListener('click', () => {
+  optOverlap.checked = prefs.get('overlap', false);
+  settingsEl.hidden = false;
+});
+optOverlap.addEventListener('change', () => prefs.set('overlap', optOverlap.checked));
+document.getElementById('btnSettingsClose').addEventListener('click', () => { settingsEl.hidden = true; });
+settingsEl.addEventListener('click', e => { if (e.target === settingsEl) settingsEl.hidden = true; });
+
+/* ---------- Sampler ---------- */
+const editor = (() => {
+  const root = document.getElementById('editor');
+  const canvas = document.getElementById('edWave');
+  const g = canvas.getContext('2d');
+  const nameEl = document.getElementById('edName');
+  const out = {
+    start: document.getElementById('edStart'),
+    end: document.getElementById('edEnd'),
+    len: document.getElementById('edLen'),
+    fin: document.getElementById('edFin'),
+    fout: document.getElementById('edFout'),
+  };
+  const btnPlay = document.getElementById('edPlay');
+  const btnZoom = document.getElementById('edZoom');
+
+  const BLOCK = 128;      // samples per peak block
+  const FADE_BAND = 44;   // px: top band where fade handles live
+  const GRAB = 30;        // px: how close a finger must be to grab a handle
+
+  let sound = null, buf = null, peaks = null, color = '#fff';
+  let st = null;          // { start, end, fadeIn, fadeOut } in seconds
+  let view = { a: 0, b: 1 };
+  let zoomed = false;
+  let drag = null;        // which handle is being dragged
+  let preview = null;     // { startedAt, region }
+  let raf = 0;
+
+  // Min/max peaks per block, mixed down to mono
+  function buildPeaks(b) {
+    const n = Math.ceil(b.length / BLOCK);
+    const max = new Float32Array(n);
+    const min = new Float32Array(n);
+    const chans = [];
+    for (let c = 0; c < b.numberOfChannels; c++) chans.push(b.getChannelData(c));
+    for (let i = 0; i < n; i++) {
+      let hi = -1, lo = 1;
+      const s0 = i * BLOCK, s1 = Math.min(b.length, s0 + BLOCK);
+      for (let s = s0; s < s1; s++) {
+        let v = 0;
+        for (const d of chans) v += d[s];
+        v /= chans.length;
+        if (v > hi) hi = v;
+        if (v < lo) lo = v;
+      }
+      max[i] = hi; min[i] = lo;
+    }
+    return { max, min, n };
+  }
+
+  const dur = () => buf.duration;
+  const W = () => canvas.width;
+  const H = () => canvas.height;
+  const dpr = () => window.devicePixelRatio || 1;
+  const tToX = t => (t - view.a) / (view.b - view.a) * W();
+  const xToT = x => view.a + x / W() * (view.b - view.a);
+
+  function fmtS(t) { return t.toFixed(2) + 's'; }
+  function fmtF(t) { return t < 1 ? Math.round(t * 1000) + 'ms' : t.toFixed(2) + 's'; }
+
+  function setView() {
+    if (zoomed) {
+      const len = st.end - st.start;
+      const pad = Math.max(len * 0.12, 0.02);
+      view = { a: Math.max(0, st.start - pad), b: Math.min(dur(), st.end + pad) };
+    } else {
+      view = { a: 0, b: dur() };
+    }
+    btnZoom.classList.toggle('on', zoomed);
+  }
+
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    canvas.width = Math.round(r.width * dpr());
+    canvas.height = Math.round(r.height * dpr());
+    draw();
+  }
+
+  // Envelope gain at time t (for drawing the faded waveform)
+  function env(t) {
+    if (t < st.start || t > st.end) return 0;
+    if (st.fadeIn > 0 && t < st.start + st.fadeIn) return (t - st.start) / st.fadeIn;
+    if (st.fadeOut > 0 && t > st.end - st.fadeOut) return (st.end - t) / st.fadeOut;
+    return 1;
+  }
+
+  function draw() {
+    if (!buf) return;
+    const w = W(), h = H(), k = dpr();
+    const band = FADE_BAND * k;
+    const mid = band + (h - band) / 2;
+    const amp = (h - band) / 2 - 6 * k;
+    g.clearRect(0, 0, w, h);
+
+    const xs = tToX(st.start), xe = tToX(st.end);
+    const xfi = tToX(st.start + st.fadeIn), xfo = tToX(st.end - st.fadeOut);
+
+    // Selected region background
+    g.fillStyle = 'rgba(255,255,255,0.04)';
+    g.fillRect(xs, 0, xe - xs, h);
+
+    // Fade regions highlighted
+    g.fillStyle = hexA(color, 0.3);
+    if (st.fadeIn > 0) g.fillRect(xs, band, xfi - xs, h - band);
+    if (st.fadeOut > 0) g.fillRect(xfo, band, xe - xfo, h - band);
+
+    // Center line
+    g.fillStyle = '#2a2a31';
+    g.fillRect(0, mid, w, Math.max(1, k));
+
+    // Waveform: one column per pixel
+    const spp = (view.b - view.a) * buf.sampleRate / w; // samples per pixel
+    for (let x = 0; x < w; x++) {
+      const t = xToT(x + 0.5);
+      const b0 = Math.floor(xToT(x) * buf.sampleRate / BLOCK);
+      const b1 = Math.max(b0 + 1, Math.floor(xToT(x + 1) * buf.sampleRate / BLOCK));
+      let hi = -1, lo = 1;
+      for (let i = Math.max(0, b0); i < Math.min(peaks.n, b1); i++) {
+        if (peaks.max[i] > hi) hi = peaks.max[i];
+        if (peaks.min[i] < lo) lo = peaks.min[i];
+      }
+      if (hi < lo) continue;
+      const inSel = t >= st.start && t <= st.end;
+      if (!inSel) {
+        g.fillStyle = '#3a3a42';
+        g.fillRect(x, mid - hi * amp, 1, Math.max(k, (hi - lo) * amp));
+        continue;
+      }
+      const e = env(t);
+      if (e < 1) {
+        // faint original behind the faded version
+        g.fillStyle = hexA(color, 0.28);
+        g.fillRect(x, mid - hi * amp, 1, Math.max(k, (hi - lo) * amp));
+      }
+      g.fillStyle = color;
+      g.fillRect(x, mid - hi * amp * e, 1, Math.max(k, (hi - lo) * amp * e));
+    }
+
+    // Fade curves
+    g.strokeStyle = '#ffffff';
+    g.lineWidth = 2 * k;
+    g.beginPath();
+    g.moveTo(xs, h);
+    g.lineTo(xfi, band);
+    g.lineTo(xfo, band);
+    g.lineTo(xe, h);
+    g.stroke();
+
+    // Start / end lines + bottom grab tabs
+    for (const x of [xs, xe]) {
+      g.fillStyle = '#ffffff';
+      g.fillRect(x - k, 0, 2 * k, h);
+    }
+    tab(xs, h, k, 'start');
+    tab(xe, h, k, 'end');
+
+    // Fade handles (squares in the top band)
+    fadeHandle(xfi, band, k, drag === 'fadeIn');
+    fadeHandle(xfo, band, k, drag === 'fadeOut');
+
+    // Playhead
+    if (preview) {
+      const c = audioCtx();
+      const el = c.currentTime - preview.startedAt;
+      if (el >= 0 && el <= preview.region.len) {
+        const px = tToX(preview.region.start + el);
+        g.fillStyle = '#ffd34d';
+        g.fillRect(px - k, band, 2 * k, h - band);
+      }
+    }
+
+    out.start.textContent = fmtS(st.start);
+    out.end.textContent = fmtS(st.end);
+    out.len.textContent = fmtS(st.end - st.start);
+    out.fin.textContent = fmtF(st.fadeIn);
+    out.fout.textContent = fmtF(st.fadeOut);
+  }
+
+  function tab(x, h, k, which) {
+    const tw = 22 * k, th = 30 * k;
+    g.fillStyle = drag === which ? '#ffd34d' : '#ffffff';
+    const left = which === 'start' ? x - k : x - tw + k;
+    roundRect(left, h - th, tw, th, 6 * k);
+    g.fill();
+    g.fillStyle = '#111114';
+    const cx = left + tw / 2;
+    g.fillRect(cx - 4 * k, h - th / 2 - 6 * k, 1.5 * k, 12 * k);
+    g.fillRect(cx + 2.5 * k, h - th / 2 - 6 * k, 1.5 * k, 12 * k);
+  }
+
+  function fadeHandle(x, band, k, active) {
+    const s = 16 * k;
+    g.fillStyle = active ? '#ffd34d' : '#ffffff';
+    roundRect(x - s / 2, band - s - 6 * k, s, s, 4 * k);
+    g.fill();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  }
+
+  function hexA(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+
+  // Which handle is under the finger?
+  function pick(px, py) {
+    const k = dpr();
+    const x = px * k;
+    const xs = tToX(st.start), xe = tToX(st.end);
+    const xfi = tToX(st.start + st.fadeIn), xfo = tToX(st.end - st.fadeOut);
+    const grab = GRAB * k;
+    let cands;
+    if (py < FADE_BAND) {
+      cands = [['fadeIn', xfi], ['fadeOut', xfo]];
+    } else {
+      cands = [['start', xs], ['end', xe]];
+    }
+    let best = null, bestD = Infinity;
+    for (const [name, hx] of cands) {
+      const d = Math.abs(hx - x);
+      if (d < grab && d < bestD) { best = name; bestD = d; }
+    }
+    // If both trim handles overlap, choose by direction later; prefer the closer side
+    if (best === null && py >= FADE_BAND) {
+      // tap in the body: nothing to grab
+    }
+    return best;
+  }
+
+  const MIN_LEN = 0.02;
+
+  function applyDrag(px) {
+    const t = Math.max(0, Math.min(dur(), xToT(px * dpr())));
+    if (drag === 'start') {
+      st.start = Math.min(t, st.end - MIN_LEN);
+    } else if (drag === 'end') {
+      st.end = Math.max(t, st.start + MIN_LEN);
+    } else if (drag === 'fadeIn') {
+      st.fadeIn = Math.max(0, Math.min(t - st.start, st.end - st.start - st.fadeOut));
+    } else if (drag === 'fadeOut') {
+      st.fadeOut = Math.max(0, Math.min(st.end - t, st.end - st.start - st.fadeIn));
+    }
+    // keep fades inside the region
+    const len = st.end - st.start;
+    st.fadeIn = Math.min(st.fadeIn, len);
+    st.fadeOut = Math.min(st.fadeOut, len - st.fadeIn);
+    // snap tiny fades to zero
+    if (st.fadeIn < 0.003) st.fadeIn = 0;
+    if (st.fadeOut < 0.003) st.fadeOut = 0;
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    const r = canvas.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    drag = pick(px, py);
+    if (!drag) return;
+    canvas.setPointerCapture(e.pointerId);
+    buzz(10);
+    draw();
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const r = canvas.getBoundingClientRect();
+    applyDrag(e.clientX - r.left);
+    draw();
+  });
+  const endDrag = () => { if (drag) { drag = null; draw(); } };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  function stopPreview() {
+    stopSound('__preview');
+    preview = null;
+    btnPlay.innerHTML = '<span class="i-play"></span>';
+    cancelAnimationFrame(raf);
+    draw();
+  }
+
+  async function togglePreview() {
+    if (preview) { stopPreview(); return; }
+    const tmp = { id: '__preview', start: st.start, end: st.end, fadeIn: st.fadeIn, fadeOut: st.fadeOut };
+    const p = await playSound(tmp, { buffer: buf, overlap: false, onEnd: () => { if (preview === p) stopPreview(); } });
+    if (!p) return;
+    preview = p;
+    btnPlay.innerHTML = '<span class="i-stop"></span>';
+    const loop = () => { draw(); if (preview) raf = requestAnimationFrame(loop); };
+    loop();
+  }
+
+  btnPlay.addEventListener('click', togglePreview);
+  btnZoom.addEventListener('click', () => { zoomed = !zoomed; setView(); draw(); });
+  document.getElementById('edReset').addEventListener('click', () => {
+    st = { start: 0, end: dur(), fadeIn: 0, fadeOut: 0 };
+    zoomed = false; setView(); draw();
+  });
+
+  function close() {
+    stopPreview();
+    root.hidden = true;
+    sound = buf = peaks = null;
+    window.removeEventListener('resize', resize);
+  }
+
+  document.getElementById('edCancel').addEventListener('click', close);
+  document.getElementById('edSave').addEventListener('click', async () => {
+    const s = sound;
+    s.start = st.start;
+    s.end = st.end >= dur() - 0.0005 ? null : st.end;
+    s.fadeIn = st.fadeIn;
+    s.fadeOut = st.fadeOut;
+    const nm = nameEl.value.trim();
+    if (nm) s.name = nm.slice(0, 40);
+    close();
+    await db.put(s);
+    render();
+    toast('Saved');
+  });
+
+  async function open(s) {
+    try {
+      buf = await getBuffer(s);
+    } catch (e) {
+      toast("Couldn't open that sound");
+      return;
+    }
+    sound = s;
+    color = s.color || '#ffffff';
+    peaks = buildPeaks(buf);
+    const r = regionOf(s, buf);
+    st = { start: r.start, end: r.end, fadeIn: r.fadeIn, fadeOut: r.fadeOut };
+    nameEl.value = s.name;
+    zoomed = false;
+    setView();
+    root.hidden = false;
+    window.addEventListener('resize', resize);
+    requestAnimationFrame(resize);
+  }
+
+  return { open };
+})();
+
+function openEditor(sound) { editor.open(sound); }
 
 /* ---------- Start ---------- */
 (async () => {
