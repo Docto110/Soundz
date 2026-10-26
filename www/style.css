@@ -618,3 +618,28 @@ body.editing .tile.add { opacity: .35; pointer-events: none; }
   background: color-mix(in srgb, var(--fx) 18%, var(--sheet)); color: var(--fx);
   font: inherit; font-weight: 900; font-size: 13px; letter-spacing: .06em;
 }
+
+/* ---------- Hold menu ---------- */
+.hold-menu { position: fixed; inset: 0; z-index: 25; background: color-mix(in srgb, var(--bg) 45%, transparent); }
+.hm-btn {
+  position: fixed; width: 64px; height: 64px; border-radius: 50%; border: 0;
+  background: var(--sheet); color: var(--fg);
+  box-shadow: 0 6px 20px rgba(0,0,0,.35), 0 0 0 1px var(--line) inset;
+  display: grid; place-items: center;
+  animation: hm-pop .22s cubic-bezier(.3, 1.6, .5, 1) both;
+  transition: transform .12s ease, background .12s ease, color .12s ease;
+}
+.hm-btn svg { width: 26px; height: 26px; }
+.hm-btn.danger { color: var(--red); animation-delay: .03s; }
+.hm-btn.hot, .hm-btn:active { transform: scale(1.15); background: var(--fg); color: var(--bg); }
+.hm-btn.danger.hot, .hm-btn.danger:active { background: var(--red); color: #fff; }
+@keyframes hm-pop { from { transform: scale(.2); opacity: 0; } }
+.tile.lifted { position: relative; z-index: 26; transform: scale(1.06); box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+@media (prefers-reduced-motion: reduce) { .hm-btn { animation: none; } }
+
+/* toast with an Undo button */
+.toast.has-action { display: flex; align-items: center; gap: 14px; padding: 8px 8px 8px 16px; }
+.toast-action {
+  height: 34px; padding: 0 14px; border-radius: 17px; border: 0;
+  background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 800;
+}
