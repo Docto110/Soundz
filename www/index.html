@@ -87,6 +87,12 @@
       <canvas id="edWave" class="ed-wave"></canvas>
     </div>
 
+    <div class="ed-tabs" role="tablist" aria-label="Sound editor">
+      <button type="button" role="tab" id="edTabTrim" aria-selected="true">Trim</button>
+      <button type="button" role="tab" id="edTabFx" aria-selected="false">Effects</button>
+    </div>
+
+    <div id="edTrim" class="ed-pane">
     <div class="ed-readout">
       <div><span class="lbl">Start</span><span id="edStart">0.00s</span></div>
       <div><span class="lbl">End</span><span id="edEnd">0.00s</span></div>
@@ -110,6 +116,10 @@
     </div>
 
     <div class="ed-help">Drag the bottom handles to trim. Drag the top squares to fade.</div>
+
+    </div>
+
+    <div id="edFx" class="ed-pane ed-fx" hidden></div>
 
     <div class="ed-controls">
       <button id="edZoom" class="ed-btn">Zoom</button>
@@ -202,6 +212,8 @@
   <input id="imgInput" type="file" accept="image/*" hidden>
   <div id="toast" class="toast" hidden></div>
 
+  <script src="fx.js"></script>
+  <script src="fx-ui.js"></script>
   <script src="app.js"></script>
   <script src="viz.js"></script>
 </body>

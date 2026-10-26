@@ -144,17 +144,34 @@ function setPlayingClass(id) {
 
 function stopSound(id) {
   const set = playing.get(id);
-  if (set) for (const src of set) { try { src.stop(); } catch (_) {} }
+  if (set) for (const v of set) killVoice(v);
   playing.delete(id);
   setPlayingClass(id);
 }
 
-// Plays a sound with its trim + fades. `opts.overlap` decides whether
-// a new play layers on top or restarts it. Returns { startedAt, region }.
+// A "voice" = one play of a sound: its source plus the output of its effect chain
+const ringing = new Set();   // every voice still making sound, including echo/reverb tails
+function killVoice(v) {
+  ringing.delete(v);
+  try { v.src.onended = null; v.src.stop(); } catch (_) {}
+  if (v.out) {
+    try {
+      const t = v.out.context.currentTime;
+      v.out.gain.setTargetAtTime(0, t, 0.01);   // quick fade so echo/reverb tails stop cleanly
+      setTimeout(() => { try { v.out.disconnect(); } catch (_) {} }, 120);
+    } catch (_) {}
+  }
+}
+
+// Plays a sound with its trim, fades and effects. `opts.overlap` decides whether
+// it layers on top of what's playing or cuts it off. Returns { startedAt, region }.
 async function playSound(sound, opts = {}) {
   const overlap = opts.overlap != null ? opts.overlap : prefs.get('overlap', false);
   // Overlap off: whatever is playing gets cut off by the new sound
-  if (!overlap) for (const id of [...playing.keys()]) stopSound(id);
+  if (!overlap) {
+    for (const id of [...playing.keys()]) stopSound(id);
+    for (const v of [...ringing]) killVoice(v);   // tails too
+  }
   try {
     const c = audioCtx();
     const buf = opts.buffer || await getBuffer(sound);
@@ -162,7 +179,10 @@ async function playSound(sound, opts = {}) {
     const src = c.createBufferSource();
     src.buffer = buf;
     const gain = c.createGain();
-    src.connect(gain).connect(master);
+    const fx = FX.chain(c, sound.fx);
+    const out = c.createGain();
+    src.connect(gain).connect(fx.input);
+    fx.output.connect(out).connect(master);
 
     const t0 = c.currentTime + 0.005;
     const g = gain.gain;
@@ -173,13 +193,18 @@ async function playSound(sound, opts = {}) {
       g.linearRampToValueAtTime(0, t0 + r.len);
     }
 
+    const voice = { src, out };
+    ringing.add(voice);
     if (!playing.has(sound.id)) playing.set(sound.id, new Set());
-    playing.get(sound.id).add(src);
+    playing.get(sound.id).add(voice);
+    const tail = FX.tailOf(sound.fx);
     src.onended = () => {
       const set = playing.get(sound.id);
-      if (set) { set.delete(src); if (!set.size) playing.delete(sound.id); }
+      if (set) { set.delete(voice); if (!set.size) playing.delete(sound.id); }
       setPlayingClass(sound.id);
       if (opts.onEnd) opts.onEnd();
+      // free the effect nodes once the tail has rung out
+      setTimeout(() => { ringing.delete(voice); try { out.disconnect(); } catch (_) {} }, (tail + 0.3) * 1000);
     };
     src.start(t0, r.start, r.len);
     if (window.onSoundPlayed) window.onSoundPlayed(sound);
@@ -430,6 +455,7 @@ async function importFile(f, isVideo) {
       const piece = cropBuffer(b, region.start, region.end);
       const extra = { fadeIn: region.fadeIn, fadeOut: region.fadeOut };
       if (image) extra.image = image;
+      if (region.fx) extra.fx = region.fx;
       await addSound(toWav(piece), nm || name, extra);
       toast('Added');
     },
@@ -886,7 +912,7 @@ const editor = (() => {
 
   async function togglePreview() {
     if (preview) { stopPreview(); return; }
-    const tmp = { id: '__preview', start: st.start, end: st.end, fadeIn: st.fadeIn, fadeOut: st.fadeOut };
+    const tmp = { id: '__preview', start: st.start, end: st.end, fadeIn: st.fadeIn, fadeOut: st.fadeOut, fx: fxList };
     const p = await playSound(tmp, { buffer: buf, overlap: false, onEnd: () => { if (preview === p) stopPreview(); } });
     if (!p) return;
     preview = p;
@@ -905,6 +931,30 @@ const editor = (() => {
   let opts = {};
   const helpEl = root.querySelector('.ed-help');
   const saveBtn = document.getElementById('edSave');
+
+  /* Trim / Effects tabs */
+  const tabTrim = document.getElementById('edTabTrim');
+  const tabFx = document.getElementById('edTabFx');
+  const trimPane = document.getElementById('edTrim');
+  const fxPane = document.getElementById('edFx');
+  let fxList = FX.normalize(null);
+  function showTab(which) {
+    const fxOn = which === 'fx';
+    tabTrim.setAttribute('aria-selected', String(!fxOn));
+    tabFx.setAttribute('aria-selected', String(fxOn));
+    trimPane.hidden = fxOn;
+    fxPane.hidden = !fxOn;
+    root.classList.toggle('fx-tab', fxOn);
+    if (buf) requestAnimationFrame(resize);   // waveform gets shorter on the Effects tab
+  }
+  function showFxCount() {
+    const n = fxList.filter(f => f && f.on).length;
+    tabFx.textContent = n ? `Effects · ${n}` : 'Effects';
+  }
+  // null when no slot is used, so sounds without effects stay clean
+  function cleanFx(l) { return l && l.some(f => f) ? JSON.parse(JSON.stringify(l)) : null; }
+  tabTrim.addEventListener('click', () => showTab('trim'));
+  tabFx.addEventListener('click', () => showTab('fx'));
 
   /* Picture + video frame */
   const thumbEl = document.getElementById('edThumb');
@@ -993,7 +1043,7 @@ const editor = (() => {
   });
   saveBtn.addEventListener('click', async () => {
     if (opts.onSave) {
-      const o = opts, region = { ...st }, b = buf, nm = nameEl.value.trim(), image = pic;
+      const o = opts, region = { ...st, fx: cleanFx(fxList) }, b = buf, nm = nameEl.value.trim(), image = pic;
       close();
       await o.onSave(region, nm, b, image);
       return;
@@ -1006,6 +1056,8 @@ const editor = (() => {
     const nm = nameEl.value.trim();
     if (nm) s.name = nm.slice(0, 40);
     if (pic) s.image = pic; else delete s.image;
+    const f = cleanFx(fxList);
+    if (f) s.fx = f; else delete s.fx;
     close();
     await db.put(s);
     render();
@@ -1032,6 +1084,10 @@ const editor = (() => {
     nameEl.value = s.name;
     frameTouched = false;
     setPic(s.image || null);
+    fxList = FX.normalize(s.fx);
+    FXUI.mount(fxPane, fxList, l => { fxList = l; showFxCount(); });
+    showTab('trim');
+    showFxCount();
     if (o.video) setupVideo(o.video);
     zoomed = false;
     setView();
@@ -1079,6 +1135,27 @@ for (const c of ACCENTS) {
 }
 showAppearance();
 
+// Renders a sound exactly as it plays (trim, fades, effects + their tails)
+async function renderSound(sound) {
+  const buf = await getBuffer(sound);
+  const r = regionOf(sound, buf);
+  const sr = buf.sampleRate;
+  const total = r.len + FX.tailOf(sound.fx);
+  const off = new OfflineAudioContext(2, Math.max(1, Math.ceil(total * sr)), sr);
+  const src = off.createBufferSource();
+  src.buffer = buf;
+  const gain = off.createGain();
+  const g = gain.gain;
+  g.setValueAtTime(r.fadeIn > 0 ? 0 : 1, 0);
+  if (r.fadeIn > 0) g.linearRampToValueAtTime(1, r.fadeIn);
+  if (r.fadeOut > 0) { g.setValueAtTime(1, r.len - r.fadeOut); g.linearRampToValueAtTime(0, r.len); }
+  const fx = FX.chain(off, sound.fx);
+  src.connect(gain).connect(fx.input);
+  fx.output.connect(off.destination);
+  src.start(0, r.start, r.len);
+  return off.startRendering();
+}
+
 /* ---------- DONT! mode ----------
    Native side (Android) keeps ready-to-play WAVs and an alarm that plays
    a random one every 20 minutes, even when the app is closed. */
@@ -1088,18 +1165,9 @@ const optDont = document.getElementById('optDont');
 const dontTest = document.getElementById('dontTest');
 const dontWarn = document.getElementById('dontWarn');
 
-// One sound, with its trim + fades baked in, as base64 WAV
+// One sound, with its trim, fades and effects baked in, as base64 WAV
 async function renderForDont(sound) {
-  const buf = await getBuffer(sound);
-  const r = regionOf(sound, buf);
-  const piece = cropBuffer(buf, r.start, r.end);
-  const sr = piece.sampleRate, n = piece.length;
-  const fi = Math.round(r.fadeIn * sr), fo = Math.round(r.fadeOut * sr);
-  for (let c = 0; c < piece.numberOfChannels; c++) {
-    const d = piece.getChannelData(c);
-    for (let i = 0; i < fi && i < n; i++) d[i] *= i / fi;
-    for (let i = 0; i < fo && i < n; i++) d[n - 1 - i] *= i / fo;
-  }
+  const piece = await renderSound(sound);
   const wav = toWav(piece);
   const dataUrl = await new Promise((res, rej) => {
     const fr = new FileReader();

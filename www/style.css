@@ -560,3 +560,61 @@ body.editing .tile.add { opacity: .35; pointer-events: none; }
 .swatch.custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 
 .overlay .sheet { max-height: calc(100% - var(--top)); overflow-y: auto; }
+
+/* ---------- Sampler: Trim / Effects tabs ---------- */
+.ed-tabs { display: flex; gap: 4px; margin: 12px 16px 0; background: var(--sheet); border-radius: 12px; padding: 4px; }
+.ed-tabs button {
+  flex: 1; height: 40px; border: 0; border-radius: 9px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 15px; font-weight: 700;
+}
+.ed-tabs button[aria-selected="true"] { background: var(--line); color: var(--fg); }
+.editor.fx-tab .ed-wave { height: min(150px, 18vh); }
+.editor.fx-tab #edZoom, .editor.fx-tab #edReset { visibility: hidden; }
+.ed-fx { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 4px; display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- Effect slots ---------- */
+.fx-slot { background: var(--sheet); border-radius: 16px; overflow: hidden; flex: none; }
+.fx-slot.off .fx-name, .fx-slot.off .fx-sum { opacity: .45; }
+.fx-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
+.fx-num {
+  width: 24px; height: 24px; border-radius: 7px; background: var(--fx); color: #fff;
+  font-size: 12px; font-weight: 800; display: grid; place-items: center; flex: none;
+}
+.fx-title {
+  flex: 1; min-width: 0; height: 44px; border: 0; background: transparent; color: var(--fg);
+  display: flex; align-items: baseline; gap: 10px; padding: 0; text-align: left; font: inherit;
+}
+.fx-name { font-weight: 900; font-size: 16px; letter-spacing: .06em; color: var(--fx); }
+.fx-sum { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-body { display: flex; flex-direction: column; gap: 12px; padding: 2px 14px 14px; }
+.fx-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 70px; align-items: center; gap: 10px; }
+.fx-lbl { font-size: 12px; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
+.fx-val { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; color: var(--fg); }
+.fx-body input[type=range] { width: 100%; margin: 0; height: 28px; accent-color: var(--fx); }
+.fx-seg { display: flex; gap: 4px; background: var(--bg); border-radius: 12px; padding: 3px; }
+.fx-seg button {
+  flex: 1; height: 36px; border: 0; border-radius: 9px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 13.5px; font-weight: 700;
+}
+.fx-seg button[aria-pressed="true"] { background: var(--line); color: var(--fg); }
+.fx-toggle { display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 600; color: var(--fg); }
+.fx-mix { background: var(--bg); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.fx-mixtop { display: flex; justify-content: space-between; align-items: baseline; }
+.fx-mixname { font-weight: 900; letter-spacing: .08em; font-size: 13px; color: var(--fg); }
+.fx-mixval { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fx-mixends { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); letter-spacing: .04em; }
+.fx-actions { display: flex; gap: 8px; }
+.fx-act {
+  flex: 1; height: 36px; border-radius: 18px; border: 1px solid var(--dash); background: transparent;
+  color: var(--fg); font: inherit; font-size: 13px; font-weight: 700;
+}
+.fx-act:disabled { opacity: .35; }
+.fx-act.danger { color: var(--red); }
+.fx-empty { border: 2px dashed var(--dash); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; flex: none; }
+.fx-empty > span { font-size: 13px; color: var(--muted); }
+.fx-pick { display: flex; gap: 8px; }
+.fx-pickbtn {
+  flex: 1; height: 42px; border-radius: 12px; border: 0;
+  background: color-mix(in srgb, var(--fx) 18%, var(--sheet)); color: var(--fx);
+  font: inherit; font-weight: 900; font-size: 13px; letter-spacing: .06em;
+}
