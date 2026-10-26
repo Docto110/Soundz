@@ -185,6 +185,34 @@ function render() {
   grid.appendChild(add);
 }
 
+/* Pictures: one object URL per sound, reused across renders */
+const imageUrls = new Map();   // id -> { blob, url }
+function imageUrl(sound) {
+  if (!sound.image) return null;
+  const c = imageUrls.get(sound.id);
+  if (c && c.blob === sound.image) return c.url;
+  if (c) URL.revokeObjectURL(c.url);
+  const url = URL.createObjectURL(sound.image);
+  imageUrls.set(sound.id, { blob: sound.image, url });
+  return url;
+}
+
+// Square, center-cropped JPEG from anything drawable (image bitmap or video frame)
+function squareJpeg(src, w, h, size = 480) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const s = Math.min(w, h);
+  cv.getContext('2d').drawImage(src, (w - s) / 2, (h - s) / 2, s, s, 0, 0, size, size);
+  return new Promise(res => cv.toBlob(b => res(b), 'image/jpeg', 0.85));
+}
+
+async function imageFileToJpeg(file) {
+  const bmp = await createImageBitmap(file);
+  const out = await squareJpeg(bmp, bmp.width, bmp.height);
+  if (bmp.close) bmp.close();
+  return out;
+}
+
 function makeTile(sound) {
   const el = document.createElement('button');
   el.className = 'tile';
@@ -193,6 +221,11 @@ function makeTile(sound) {
   el.style.setProperty('--hold', (DELETE_MS - TAP_MAX_MS) + 'ms');
   el.innerHTML = '<span class="fill"></span><span class="trash"></span><span class="name"></span>';
   el.querySelector('.name').textContent = sound.name;
+  const img = imageUrl(sound);
+  if (img) {
+    el.classList.add('has-img');
+    el.style.backgroundImage = `linear-gradient(rgba(0,0,0,0) 40%, rgba(0,0,0,.6)), url("${img}")`;
+  }
 
   let downAt = 0, startX = 0, startY = 0, holdTimer = null, deleteTimer = null, active = false;
 
@@ -319,21 +352,27 @@ async function importFile(f, isVideo) {
     return;
   }
   const name = (f.name || '').replace(/\.[^.]+$/, '').slice(0, 40) || nextRecName();
-  if (buf.duration <= MAX_SOUND_S + 0.05) {
-    await addSound(isVideo ? toWav(buf) : f, name);
+  const long = buf.duration > MAX_SOUND_S + 0.05;
+  if (!long && !isVideo) {
+    await addSound(f, name);
     return;
   }
-  // Too long: let the user pick which 10 seconds to keep, then save only that part
-  const temp = { id: '__import', name, color: '#ffffff', start: 0, end: MAX_SOUND_S };
+  // Videos (any length) and long audio open the sampler:
+  // pick up to 10 seconds, and for videos a frame for the picture.
+  const temp = { id: '__import', name, color: '#c8c8d0', start: 0, end: Math.min(buf.duration, MAX_SOUND_S) };
   await openEditor(temp, {
     buffer: buf,
-    onSave: async (region, nm, b) => {
+    video: isVideo ? f : null,
+    onSave: async (region, nm, b, image) => {
       const piece = cropBuffer(b, region.start, region.end);
-      await addSound(toWav(piece), nm || name, { fadeIn: region.fadeIn, fadeOut: region.fadeOut });
+      const extra = { fadeIn: region.fadeIn, fadeOut: region.fadeOut };
+      if (image) extra.image = image;
+      await addSound(toWav(piece), nm || name, extra);
       toast('Added');
     },
   });
-  toast(`It's ${Math.round(buf.duration)}s long. Pick up to ${MAX_SOUND_S} seconds.`);
+  if (long) toast(`It's ${Math.round(buf.duration)}s long. Pick up to ${MAX_SOUND_S} seconds.`);
+  else toast('Pick a frame for the picture, then tap Add');
 }
 
 function nextRecName() {
@@ -763,7 +802,12 @@ const editor = (() => {
     applyDrag(e.clientX - r.left);
     draw();
   });
-  const endDrag = () => { if (drag) { drag = null; draw(); } };
+  const endDrag = () => {
+    if (!drag) return;
+    const moved = drag === 'start' || drag === 'move';
+    drag = null; draw();
+    if (vid && !frameTouched && moved) { frameIn.value = st.start; frameOut.textContent = fmtT(st.start); grabFrame(st.start); }
+  };
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
@@ -797,9 +841,84 @@ const editor = (() => {
   const helpEl = root.querySelector('.ed-help');
   const saveBtn = document.getElementById('edSave');
 
+  /* Picture + video frame */
+  const thumbEl = document.getElementById('edThumb');
+  const picChoose = document.getElementById('edPicChoose');
+  const picRemove = document.getElementById('edPicRemove');
+  const frameRow = document.getElementById('edFrameRow');
+  const frameIn = document.getElementById('edFrame');
+  const frameOut = document.getElementById('edFrameT');
+  const imgInput = document.getElementById('imgInput');
+  let pic = null, picUrl = null;           // current picture blob in the editor
+  let vid = null, vidUrl = null, frameTouched = false, seekBusy = false, seekWant = null;
+
+  function setPic(blob) {
+    pic = blob || null;
+    if (picUrl) URL.revokeObjectURL(picUrl);
+    picUrl = pic ? URL.createObjectURL(pic) : null;
+    thumbEl.style.backgroundImage = picUrl ? `url("${picUrl}")` : '';
+    thumbEl.style.backgroundColor = color;
+    thumbEl.classList.toggle('empty', !pic);
+    picRemove.hidden = !pic;
+    picChoose.textContent = pic ? 'Change picture' : 'Choose picture';
+  }
+
+  picChoose.addEventListener('click', () => { imgInput.value = ''; imgInput.click(); });
+  picRemove.addEventListener('click', () => { setPic(null); frameTouched = true; });
+  imgInput.addEventListener('change', async () => {
+    const f = imgInput.files && imgInput.files[0];
+    if (!f) return;
+    try { setPic(await imageFileToJpeg(f)); frameTouched = true; }
+    catch (e) { console.error(e); toast("Couldn't open that picture"); }
+  });
+
+  // Grab a video frame at time t (seconds) as the picture
+  async function grabFrame(t) {
+    if (!vid) return;
+    seekWant = t;
+    if (seekBusy) return;
+    seekBusy = true;
+    while (seekWant != null && vid) {
+      const v = vid, want = seekWant; seekWant = null;
+      await new Promise(res => {
+        const done = () => { v.removeEventListener('seeked', done); res(); };
+        v.addEventListener('seeked', done);
+        v.currentTime = Math.min(Math.max(0, want), Math.max(0, (v.duration || 0) - 0.05));
+        setTimeout(done, 1500);
+      });
+      if (v === vid && v.videoWidth) setPic(await squareJpeg(v, v.videoWidth, v.videoHeight));
+    }
+    seekWant = null;
+    seekBusy = false;
+  }
+  const fmtT = t => Math.floor(t / 60) + ':' + (t % 60).toFixed(1).padStart(4, '0');
+  frameIn.addEventListener('input', () => {
+    frameTouched = true;
+    frameOut.textContent = fmtT(+frameIn.value);
+    grabFrame(+frameIn.value);
+  });
+
+  function setupVideo(file) {
+    vidUrl = URL.createObjectURL(file);
+    vid = document.createElement('video');
+    vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
+    vid.src = vidUrl;
+    frameRow.hidden = false;
+    vid.addEventListener('loadeddata', () => {
+      frameIn.max = vid.duration || 0;
+      frameIn.value = st.start;
+      frameOut.textContent = fmtT(st.start);
+      grabFrame(st.start);
+    }, { once: true });
+    vid.addEventListener('error', () => { frameRow.hidden = true; }, { once: true });
+  }
+
   function close() {
     stopPreview();
     root.hidden = true;
+    if (vid) { vid.removeAttribute('src'); vid.load(); vid = null; }
+    if (vidUrl) { URL.revokeObjectURL(vidUrl); vidUrl = null; }
+    frameRow.hidden = true;
     sound = buf = peaks = null;
     window.removeEventListener('resize', resize);
   }
@@ -809,9 +928,9 @@ const editor = (() => {
   });
   saveBtn.addEventListener('click', async () => {
     if (opts.onSave) {
-      const o = opts, region = { ...st }, b = buf, nm = nameEl.value.trim();
+      const o = opts, region = { ...st }, b = buf, nm = nameEl.value.trim(), image = pic;
       close();
-      await o.onSave(region, nm, b);
+      await o.onSave(region, nm, b, image);
       return;
     }
     const s = sound;
@@ -821,6 +940,7 @@ const editor = (() => {
     s.fadeOut = st.fadeOut;
     const nm = nameEl.value.trim();
     if (nm) s.name = nm.slice(0, 40);
+    if (pic) s.image = pic; else delete s.image;
     close();
     await db.put(s);
     render();
@@ -845,6 +965,9 @@ const editor = (() => {
     const r = regionOf(s, buf);   // already capped at MAX_SOUND_S
     st = { start: r.start, end: r.end, fadeIn: r.fadeIn, fadeOut: r.fadeOut };
     nameEl.value = s.name;
+    frameTouched = false;
+    setPic(s.image || null);
+    if (o.video) setupVideo(o.video);
     zoomed = false;
     setView();
     root.hidden = false;

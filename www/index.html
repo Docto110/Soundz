@@ -66,6 +66,20 @@
       <div><span class="lbl">Fade out</span><span id="edFout">0ms</span></div>
     </div>
 
+    <div class="ed-pic">
+      <div id="edThumb" class="ed-thumb empty"></div>
+      <div class="ed-pic-side">
+        <div class="ed-pic-btns">
+          <button id="edPicChoose" class="ed-btn wide">Choose picture</button>
+          <button id="edPicRemove" class="ed-btn" hidden>Remove</button>
+        </div>
+        <div id="edFrameRow" class="ed-frame" hidden>
+          <div class="ed-frame-top"><label for="edFrame">Video frame</label><span id="edFrameT">0:00.0</span></div>
+          <input id="edFrame" type="range" min="0" max="1" step="0.05" value="0">
+        </div>
+      </div>
+    </div>
+
     <div class="ed-help">Drag the bottom handles to trim. Drag the top squares to fade.</div>
 
     <div class="ed-controls">
@@ -145,6 +159,7 @@
 
   <input id="fileInput" type="file" accept="audio/*" hidden>
   <input id="videoInput" type="file" accept="video/*" hidden>
+  <input id="imgInput" type="file" accept="image/*" hidden>
   <div id="toast" class="toast" hidden></div>
 
   <script src="app.js"></script>
