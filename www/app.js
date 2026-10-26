@@ -877,23 +877,38 @@ const editor = (() => {
     if (st.fadeOut < 0.003) st.fadeOut = 0;
   }
 
+  // A quick tap (no real drag) anywhere on the waveform plays from that spot, like FL Studio
+  let tap = null;   // { x, y, at, t }
+  const TAP_PX = 8, TAP_MS = 350;
+
   canvas.addEventListener('pointerdown', e => {
     const r = canvas.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
     drag = pick(px, py);
-    if (!drag) return;
-    if (drag === 'move') grabOffset = xToT(px * dpr()) - st.start;
+    // taps count on the waveform body, or on the selection (which also slides when dragged)
+    tap = (!drag || drag === 'move') && py >= FADE_BAND
+      ? { x: e.clientX, y: e.clientY, at: Date.now(), t: xToT(px * dpr()) } : null;
+    if (!drag && !tap) return;
     canvas.setPointerCapture(e.pointerId);
-    buzz(10);
+    if (drag === 'move') grabOffset = xToT(px * dpr()) - st.start;
+    if (drag && drag !== 'move') buzz(10);
     draw();
   });
   canvas.addEventListener('pointermove', e => {
-    if (!drag) return;
+    if (tap && (Math.abs(e.clientX - tap.x) > TAP_PX || Math.abs(e.clientY - tap.y) > TAP_PX)) tap = null;
+    if (!drag || (drag === 'move' && tap)) return;   // don't slide until it's clearly a drag
     const r = canvas.getBoundingClientRect();
     applyDrag(e.clientX - r.left);
     draw();
   });
-  const endDrag = () => {
+  const endDrag = (e) => {
+    const t = tap;
+    tap = null;
+    if (t && e && e.type === 'pointerup' && Date.now() - t.at < TAP_MS) {
+      drag = null; draw();
+      playFrom(t.t);
+      return;
+    }
     if (!drag) return;
     const moved = drag === 'start' || drag === 'move';
     drag = null; draw();
@@ -912,7 +927,16 @@ const editor = (() => {
 
   async function togglePreview() {
     if (preview) { stopPreview(); return; }
-    const tmp = { id: '__preview', start: st.start, end: st.end, fadeIn: st.fadeIn, fadeOut: st.fadeOut, fx: fxList };
+    playFrom(st.start);
+  }
+
+  // Preview from time t (clamped into the selection), with the same fades and effects
+  async function playFrom(t) {
+    if (preview) stopPreview();
+    const from = Math.max(st.start, Math.min(st.end - 0.01, t));
+    const fadeInLeft = Math.max(0, st.start + st.fadeIn - from);
+    const fadeOutLen = Math.min(st.fadeOut, st.end - from);
+    const tmp = { id: '__preview', start: from, end: st.end, fadeIn: fadeInLeft, fadeOut: fadeOutLen, fx: fxList };
     const p = await playSound(tmp, { buffer: buf, overlap: false, onEnd: () => { if (preview === p) stopPreview(); } });
     if (!p) return;
     preview = p;
@@ -1074,7 +1098,7 @@ const editor = (() => {
     }
     helpEl.textContent = o.onSave
       ? `Pick up to ${MAX_SOUND_S} seconds to keep. Drag the middle to slide it.`
-      : 'Drag the bottom handles to trim, the top squares to fade, the middle to slide.';
+      : 'Tap the waveform to play from there. Drag the bottom handles to trim, the top squares to fade, the middle to slide.';
     saveBtn.textContent = o.onSave ? 'Add' : 'Save';
     sound = s;
     color = s.color || '#ffffff';
