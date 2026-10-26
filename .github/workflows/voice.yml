@@ -11,9 +11,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: voice
+  cancel-in-progress: true
+
 jobs:
   voice:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
@@ -23,13 +28,12 @@ jobs:
 
       - name: Install Piper and a voice
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
-          pip install "piper-tts==1.2.0"
-          python -m piper --help | head -5
+          pip install --progress-bar off "piper-tts==1.2.0" imageio-ffmpeg
+          echo "FFMPEG=$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" >> "$GITHUB_ENV"
           mkdir -p /tmp/voice && cd /tmp/voice
           base=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/ryan/medium
-          curl -sSLf -o v.onnx "$base/en_US-ryan-medium.onnx"
-          curl -sSLf -o v.onnx.json "$base/en_US-ryan-medium.onnx.json"
+          curl -sSLf --retry 3 --max-time 120 -o v.onnx "$base/en_US-ryan-medium.onnx"
+          curl -sSLf --retry 3 --max-time 120 -o v.onnx.json "$base/en_US-ryan-medium.onnx.json"
 
       - name: Speak each line
         run: |
@@ -38,7 +42,7 @@ jobs:
             [ -z "$name" ] && continue
             echo "$text" | python -m piper --model /tmp/voice/v.onnx --output_file "/tmp/voice/$name.raw.wav"
             # trim silence at the ends and normalize loudness
-            ffmpeg -loglevel error -y -i "/tmp/voice/$name.raw.wav" \
+            "$FFMPEG" -loglevel error -y -i "/tmp/voice/$name.raw.wav" \
               -af "silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse,loudnorm=I=-14:TP=-1.5" \
               -ar 44100 -ac 1 "www/starter/$name.wav"
             echo "made www/starter/$name.wav"
