@@ -1,6 +1,7 @@
 'use strict';
 
 /* ---------- Settings ---------- */
+const MAX_SOUND_S = 10;     // longest a sound on the board can be
 const TAP_MAX_MS = 500;     // released before this = play
 const DELETE_MS = 5000;     // hold this long = delete
 const MOVE_CANCEL_PX = 12;  // finger moved this far = it's a scroll, cancel
@@ -39,7 +40,7 @@ const db = (() => {
 })();
 
 /* ---------- Audio ---------- */
-let ctx;
+let ctx, master, analyser;  // everything plays through master -> analyser (for the visualizer)
 const buffers = new Map();   // id -> AudioBuffer
 const playing = new Map();   // id -> Set of AudioBufferSourceNodes
 
@@ -59,6 +60,7 @@ function regionOf(sound, buf) {
   let start = Math.max(0, Math.min(sound.start || 0, dur));
   let end = sound.end == null ? dur : Math.max(start, Math.min(sound.end, dur));
   if (end - start < 0.01) { start = 0; end = dur; }
+  end = Math.min(end, start + MAX_SOUND_S);
   const len = end - start;
   let fadeIn = Math.max(0, Math.min(sound.fadeIn || 0, len));
   let fadeOut = Math.max(0, Math.min(sound.fadeOut || 0, len - fadeIn));
@@ -66,7 +68,14 @@ function regionOf(sound, buf) {
 }
 
 function audioCtx() {
-  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 4096;
+    master.connect(analyser);
+    analyser.connect(ctx.destination);
+  }
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
 }
@@ -95,7 +104,8 @@ function stopSound(id) {
 // a new play layers on top or restarts it. Returns { startedAt, region }.
 async function playSound(sound, opts = {}) {
   const overlap = opts.overlap != null ? opts.overlap : prefs.get('overlap', false);
-  if (!overlap) stopSound(sound.id);
+  // Overlap off: whatever is playing gets cut off by the new sound
+  if (!overlap) for (const id of [...playing.keys()]) stopSound(id);
   try {
     const c = audioCtx();
     const buf = opts.buffer || await getBuffer(sound);
@@ -103,7 +113,7 @@ async function playSound(sound, opts = {}) {
     const src = c.createBufferSource();
     src.buffer = buf;
     const gain = c.createGain();
-    src.connect(gain).connect(c.destination);
+    src.connect(gain).connect(master);
 
     const t0 = c.currentTime + 0.005;
     const g = gain.gain;
@@ -123,6 +133,7 @@ async function playSound(sound, opts = {}) {
       if (opts.onEnd) opts.onEnd();
     };
     src.start(t0, r.start, r.len);
+    if (window.onSoundPlayed) window.onSoundPlayed(sound);
     setPlayingClass(sound.id);
     return { startedAt: t0, region: r };
   } catch (e) {
@@ -259,7 +270,7 @@ async function removeSound(sound) {
   setTimeout(render, 250);
 }
 
-async function addSound(blob, name) {
+async function addSound(blob, name, extra = {}) {
   const used = new Set(sounds.map(s => s.color));
   const free = COLORS.filter(c => !used.has(c));
   const pool = free.length ? free : COLORS;
@@ -269,6 +280,7 @@ async function addSound(blob, name) {
     blob,
     color: pool[Math.floor(Math.random() * pool.length)],
     created: Date.now(),
+    ...extra,
   };
   // Make sure it actually decodes before saving it
   try {
@@ -281,6 +293,47 @@ async function addSound(blob, name) {
   sounds.push(sound);
   render();
   buzz(25);
+  return sound;
+}
+
+/* ---------- Importing (audio files and videos), max 10 seconds ---------- */
+const MAX_IMPORT_BYTES = 300 * 1024 * 1024;
+
+function cropBuffer(b, t0, t1) {
+  const sr = b.sampleRate;
+  const i0 = Math.max(0, Math.floor(t0 * sr)), i1 = Math.min(b.length, Math.ceil(t1 * sr));
+  const out = audioCtx().createBuffer(b.numberOfChannels, Math.max(1, i1 - i0), sr);
+  for (let c = 0; c < b.numberOfChannels; c++) out.copyToChannel(b.getChannelData(c).subarray(i0, i1), c);
+  return out;
+}
+
+async function importFile(f, isVideo) {
+  if (f.size > MAX_IMPORT_BYTES) { toast('That file is too big, try a shorter one'); return; }
+  toast(isVideo ? 'Grabbing the sound…' : 'Loading…');
+  let buf;
+  try {
+    buf = await audioCtx().decodeAudioData(await f.arrayBuffer());
+  } catch (e) {
+    console.error(e);
+    toast(isVideo ? "Couldn't find any sound in that video" : "That file isn't a playable sound");
+    return;
+  }
+  const name = (f.name || '').replace(/\.[^.]+$/, '').slice(0, 40) || nextRecName();
+  if (buf.duration <= MAX_SOUND_S + 0.05) {
+    await addSound(isVideo ? toWav(buf) : f, name);
+    return;
+  }
+  // Too long: let the user pick which 10 seconds to keep, then save only that part
+  const temp = { id: '__import', name, color: '#ffffff', start: 0, end: MAX_SOUND_S };
+  await openEditor(temp, {
+    buffer: buf,
+    onSave: async (region, nm, b) => {
+      const piece = cropBuffer(b, region.start, region.end);
+      await addSound(toWav(piece), nm || name, { fadeIn: region.fadeIn, fadeOut: region.fadeOut });
+      toast('Added');
+    },
+  });
+  toast(`It's ${Math.round(buf.duration)}s long. Pick up to ${MAX_SOUND_S} seconds.`);
 }
 
 function nextRecName() {
@@ -303,8 +356,7 @@ document.getElementById('btnPick').addEventListener('click', () => {
 fileInput.addEventListener('change', async () => {
   const f = fileInput.files && fileInput.files[0];
   if (!f) return;
-  const name = (f.name || 'Sound').replace(/\.[^.]+$/, '').slice(0, 40) || nextRecName();
-  await addSound(f, name);
+  await importFile(f, false);
 });
 
 /* ---------- Sound from a video ---------- */
@@ -320,21 +372,7 @@ document.getElementById('btnVideo').addEventListener('click', () => {
 videoInput.addEventListener('change', async () => {
   const f = videoInput.files && videoInput.files[0];
   if (!f) return;
-  if (f.size > MAX_VIDEO_BYTES) {
-    toast('That video is too big, try a shorter one');
-    return;
-  }
-  toast('Grabbing the sound…');
-  let buf;
-  try {
-    buf = await audioCtx().decodeAudioData(await f.arrayBuffer());
-  } catch (e) {
-    console.error(e);
-    toast("Couldn't find any sound in that video");
-    return;
-  }
-  const name = (f.name || '').replace(/\.[^.]+$/, '').slice(0, 40) || nextRecName();
-  await addSound(toWav(buf), name);
+  await importFile(f, true);
 });
 
 // Turn decoded audio into a small mono WAV file
@@ -390,10 +428,15 @@ document.getElementById('btnRecord').addEventListener('click', async () => {
   recorder.start();
   recStart = Date.now();
   recTime.textContent = '0:00';
+  recTime.textContent = `0:00 / 0:${String(MAX_SOUND_S).padStart(2, '0')}`;
   recTick = setInterval(() => {
-    const s = Math.floor((Date.now() - recStart) / 1000);
-    recTime.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-  }, 250);
+    const el = (Date.now() - recStart) / 1000;
+    if (el >= MAX_SOUND_S) {   // stop by itself at the limit
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+      return;
+    }
+    recTime.textContent = `0:${String(Math.floor(el)).padStart(2, '0')} / 0:${String(MAX_SOUND_S).padStart(2, '0')}`;
+  }, 100);
   rec.hidden = false;
   buzz(20);
 });
@@ -426,7 +469,7 @@ function setEditMode(on) {
   editHint.hidden = !on;
   if (on) {
     for (const id of [...playing.keys()]) stopSound(id);
-    if (!sounds.length) { toast('Add a sound first'); setEditMode(false); }
+    if (!sounds.length && !prefs.get('showViz', true)) { toast('Add a sound first'); setEditMode(false); }
   }
 }
 btnEdit.addEventListener('click', () => setEditMode(true));
@@ -670,21 +713,26 @@ const editor = (() => {
       const d = Math.abs(hx - x);
       if (d < grab && d < bestD) { best = name; bestD = d; }
     }
-    // If both trim handles overlap, choose by direction later; prefer the closer side
-    if (best === null && py >= FADE_BAND) {
-      // tap in the body: nothing to grab
-    }
+    // Finger inside the selection (not on a handle): slide the whole selection
+    if (best === null && py >= FADE_BAND && x > xs && x < xe) best = 'move';
     return best;
   }
 
   const MIN_LEN = 0.02;
+  let grabOffset = 0;   // for sliding: where in the selection the finger landed
 
   function applyDrag(px) {
     const t = Math.max(0, Math.min(dur(), xToT(px * dpr())));
     if (drag === 'start') {
       st.start = Math.min(t, st.end - MIN_LEN);
+      if (st.end - st.start > MAX_SOUND_S) st.end = st.start + MAX_SOUND_S;
     } else if (drag === 'end') {
       st.end = Math.max(t, st.start + MIN_LEN);
+      if (st.end - st.start > MAX_SOUND_S) st.start = st.end - MAX_SOUND_S;
+    } else if (drag === 'move') {
+      const len = st.end - st.start;
+      st.start = Math.max(0, Math.min(dur() - len, t - grabOffset));
+      st.end = st.start + len;
     } else if (drag === 'fadeIn') {
       st.fadeIn = Math.max(0, Math.min(t - st.start, st.end - st.start - st.fadeOut));
     } else if (drag === 'fadeOut') {
@@ -704,6 +752,7 @@ const editor = (() => {
     const px = e.clientX - r.left, py = e.clientY - r.top;
     drag = pick(px, py);
     if (!drag) return;
+    if (drag === 'move') grabOffset = xToT(px * dpr()) - st.start;
     canvas.setPointerCapture(e.pointerId);
     buzz(10);
     draw();
@@ -740,9 +789,13 @@ const editor = (() => {
   btnPlay.addEventListener('click', togglePreview);
   btnZoom.addEventListener('click', () => { zoomed = !zoomed; setView(); draw(); });
   document.getElementById('edReset').addEventListener('click', () => {
-    st = { start: 0, end: dur(), fadeIn: 0, fadeOut: 0 };
+    st = { start: 0, end: Math.min(dur(), MAX_SOUND_S), fadeIn: 0, fadeOut: 0 };
     zoomed = false; setView(); draw();
   });
+
+  let opts = {};
+  const helpEl = root.querySelector('.ed-help');
+  const saveBtn = document.getElementById('edSave');
 
   function close() {
     stopPreview();
@@ -751,8 +804,16 @@ const editor = (() => {
     window.removeEventListener('resize', resize);
   }
 
-  document.getElementById('edCancel').addEventListener('click', close);
-  document.getElementById('edSave').addEventListener('click', async () => {
+  document.getElementById('edCancel').addEventListener('click', () => {
+    const o = opts; close(); if (o.onCancel) o.onCancel();
+  });
+  saveBtn.addEventListener('click', async () => {
+    if (opts.onSave) {
+      const o = opts, region = { ...st }, b = buf, nm = nameEl.value.trim();
+      close();
+      await o.onSave(region, nm, b);
+      return;
+    }
     const s = sound;
     s.start = st.start;
     s.end = st.end >= dur() - 0.0005 ? null : st.end;
@@ -766,17 +827,22 @@ const editor = (() => {
     toast('Saved');
   });
 
-  async function open(s) {
+  async function open(s, o = {}) {
+    opts = o;
     try {
-      buf = await getBuffer(s);
+      buf = o.buffer || await getBuffer(s);
     } catch (e) {
       toast("Couldn't open that sound");
       return;
     }
+    helpEl.textContent = o.onSave
+      ? `Pick up to ${MAX_SOUND_S} seconds to keep. Drag the middle to slide it.`
+      : 'Drag the bottom handles to trim, the top squares to fade, the middle to slide.';
+    saveBtn.textContent = o.onSave ? 'Add' : 'Save';
     sound = s;
     color = s.color || '#ffffff';
     peaks = buildPeaks(buf);
-    const r = regionOf(s, buf);
+    const r = regionOf(s, buf);   // already capped at MAX_SOUND_S
     st = { start: r.start, end: r.end, fadeIn: r.fadeIn, fadeOut: r.fadeOut };
     nameEl.value = s.name;
     zoomed = false;
@@ -789,7 +855,7 @@ const editor = (() => {
   return { open };
 })();
 
-function openEditor(sound) { editor.open(sound); }
+function openEditor(sound, o) { return editor.open(sound, o); }
 
 /* ---------- Start ---------- */
 (async () => {
