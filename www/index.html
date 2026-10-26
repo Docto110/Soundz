@@ -16,8 +16,11 @@
       <button id="btnRecord" class="sheet-btn">
         <span class="dot"></span> Record
       </button>
+      <button id="btnVideo" class="sheet-btn">
+        <span class="video-icon"></span> From video
+      </button>
       <button id="btnPick" class="sheet-btn">
-        <span class="file-icon"></span> Choose file
+        <span class="file-icon"></span> Audio file
       </button>
       <button id="btnCancel" class="sheet-cancel">Cancel</button>
     </div>
@@ -34,6 +37,7 @@
   </div>
 
   <input id="fileInput" type="file" accept="audio/*" hidden>
+  <input id="videoInput" type="file" accept="video/*" hidden>
   <div id="toast" class="toast" hidden></div>
 
   <script src="app.js"></script>

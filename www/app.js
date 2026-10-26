@@ -169,10 +169,27 @@ function makeTile(sound) {
     }, DELETE_MS);
   });
 
+  function insideTile(x, y) {
+    const r = el.getBoundingClientRect();
+    const pad = 6; // a little forgiveness at the edges
+    return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+  }
+
   el.addEventListener('pointermove', e => {
     if (!active) return;
-    if (Math.abs(e.clientX - startX) > MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > MOVE_CANCEL_PX) reset();
+    if (el.classList.contains('holding')) {
+      // Already holding to delete: only cancel if the finger leaves the square
+      if (!insideTile(e.clientX, e.clientY)) reset();
+    } else if (Math.abs(e.clientX - startX) > MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > MOVE_CANCEL_PX) {
+      // Early on, a real swipe means the user is scrolling
+      reset();
+    }
   });
+
+  // While holding to delete, stop the page from scrolling (which would cancel the hold)
+  el.addEventListener('touchmove', e => {
+    if (active && el.classList.contains('holding') && e.cancelable) e.preventDefault();
+  }, { passive: false });
 
   el.addEventListener('pointerup', () => {
     if (!active) return;
@@ -182,7 +199,6 @@ function makeTile(sound) {
   });
 
   el.addEventListener('pointercancel', reset);
-  el.addEventListener('pointerleave', reset);
   el.addEventListener('contextmenu', e => e.preventDefault());
 
   return el;
@@ -246,6 +262,59 @@ fileInput.addEventListener('change', async () => {
   const name = (f.name || 'Sound').replace(/\.[^.]+$/, '').slice(0, 40) || nextRecName();
   await addSound(f, name);
 });
+
+/* ---------- Sound from a video ---------- */
+const videoInput = document.getElementById('videoInput');
+const MAX_VIDEO_BYTES = 300 * 1024 * 1024;
+
+document.getElementById('btnVideo').addEventListener('click', () => {
+  sheet.hidden = true;
+  videoInput.value = '';
+  videoInput.click();
+});
+
+videoInput.addEventListener('change', async () => {
+  const f = videoInput.files && videoInput.files[0];
+  if (!f) return;
+  if (f.size > MAX_VIDEO_BYTES) {
+    toast('That video is too big, try a shorter one');
+    return;
+  }
+  toast('Grabbing the sound…');
+  let buf;
+  try {
+    buf = await audioCtx().decodeAudioData(await f.arrayBuffer());
+  } catch (e) {
+    console.error(e);
+    toast("Couldn't find any sound in that video");
+    return;
+  }
+  const name = (f.name || '').replace(/\.[^.]+$/, '').slice(0, 40) || nextRecName();
+  await addSound(toWav(buf), name);
+});
+
+// Turn decoded audio into a small mono WAV file
+function toWav(buf) {
+  const rate = buf.sampleRate;
+  const len = buf.length;
+  const chans = buf.numberOfChannels;
+  const mono = new Float32Array(len);
+  for (let c = 0; c < chans; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) mono[i] += d[i] / chans;
+  }
+  const out = new DataView(new ArrayBuffer(44 + len * 2));
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); out.setUint32(4, 36 + len * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+  out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+  str(36, 'data'); out.setUint32(40, len * 2, true);
+  for (let i = 0; i < len; i++) {
+    const v = Math.max(-1, Math.min(1, mono[i]));
+    out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+  }
+  return new Blob([out.buffer], { type: 'audio/wav' });
+}
 
 /* ---------- Recording ---------- */
 let recorder = null, chunks = [], recStart = 0, recTick = null, discard = false;
