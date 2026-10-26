@@ -50,7 +50,8 @@ html, body {
   text-align: left;
   overflow: hidden;
   touch-action: manipulation;
-  transition: transform .08s ease, filter .15s ease;
+  /* release: springs back with a small overshoot */
+  transition: transform .42s cubic-bezier(.3, 1.9, .5, 1), filter .15s ease;
 }
 
 .tile .name {
@@ -64,7 +65,7 @@ html, body {
   text-shadow: 0 1px 2px rgba(0,0,0,.35);
 }
 
-.tile.pressed { transform: scale(.95); }
+.tile.pressed { transform: scale(.93); transition: transform .09s ease-in, filter .15s ease; }
 .tile.playing { filter: brightness(1.25); box-shadow: 0 0 0 3px rgba(255,255,255,.85) inset; }
 
 /* Delete progress fill: rises from bottom while holding */
@@ -481,3 +482,14 @@ body.editing .tile.add { opacity: .35; pointer-events: none; }
 .ed-frame-top { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
 .ed-frame-top span { font-variant-numeric: tabular-nums; }
 .ed-frame input { width: 100%; accent-color: #ffd34d; margin: 0; height: 26px; }
+
+@media (prefers-reduced-motion: reduce) { .tile { transition: filter .15s ease; } }
+
+/* ---------- DONT! ---------- */
+.dont-row .row-title { font-weight: 900; letter-spacing: .02em; color: #ff4d5e; }
+.dont-test {
+  margin-top: 8px; height: 32px; padding: 0 14px; border-radius: 16px;
+  border: 1px solid #3a3a44; background: transparent; color: #fff;
+  font: inherit; font-size: 13px; font-weight: 700;
+}
+.dont-box h4 { font-size: 26px; font-weight: 900; color: #ff4d5e; letter-spacing: .02em; }

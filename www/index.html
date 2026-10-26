@@ -42,6 +42,14 @@
         </span>
         <input id="optViz" type="checkbox" class="switch" checked>
       </label>
+      <label class="row dont-row">
+        <span>
+          <span class="row-title">DONT!</span>
+          <span class="row-sub">Plays a random sound from your board every 20 minutes. Even when the app is closed.</span>
+          <button id="dontTest" class="dont-test" type="button" hidden>Play one now</button>
+        </span>
+        <input id="optDont" type="checkbox" class="switch">
+      </label>
       <button id="btnSettingsClose" class="sheet-cancel">Close</button>
     </div>
   </div>
@@ -153,6 +161,17 @@
       <div class="confirm-row">
         <button class="btn ghost" id="vKeep">Keep editing</button>
         <button class="btn danger" id="vDiscard">Discard</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="confirm" id="dontWarn" hidden>
+    <div class="confirm-box dont-box" role="alertdialog" aria-labelledby="dwH" aria-describedby="dwP">
+      <h4 id="dwH">DON'T.</h4>
+      <p id="dwP">Seriously. Every 20 minutes your phone will blast a random sound from your board, even when Soundz is closed. It plays at your media volume, wherever you are.</p>
+      <div class="confirm-row">
+        <button class="btn ghost" id="dontNo">Okay, I won't</button>
+        <button class="btn danger" id="dontYes">Do it</button>
       </div>
     </div>
   </div>

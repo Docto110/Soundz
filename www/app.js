@@ -183,6 +183,7 @@ function render() {
   add.setAttribute('aria-label', 'Add sound');
   add.addEventListener('click', () => { sheet.hidden = false; });
   grid.appendChild(add);
+  if (typeof scheduleDontSync === 'function') scheduleDontSync();
 }
 
 /* Pictures: one object URL per sound, reused across renders */
@@ -979,6 +980,112 @@ const editor = (() => {
 })();
 
 function openEditor(sound, o) { return editor.open(sound, o); }
+
+/* ---------- DONT! mode ----------
+   Native side (Android) keeps ready-to-play WAVs and an alarm that plays
+   a random one every 20 minutes, even when the app is closed. */
+const DONT_MINUTES = 20;
+const DontNative = (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()
+  && window.Capacitor.registerPlugin) ? window.Capacitor.registerPlugin('Dont') : null;
+const optDont = document.getElementById('optDont');
+const dontTest = document.getElementById('dontTest');
+const dontWarn = document.getElementById('dontWarn');
+
+// One sound, with its trim + fades baked in, as base64 WAV
+async function renderForDont(sound) {
+  const buf = await getBuffer(sound);
+  const r = regionOf(sound, buf);
+  const piece = cropBuffer(buf, r.start, r.end);
+  const sr = piece.sampleRate, n = piece.length;
+  const fi = Math.round(r.fadeIn * sr), fo = Math.round(r.fadeOut * sr);
+  for (let c = 0; c < piece.numberOfChannels; c++) {
+    const d = piece.getChannelData(c);
+    for (let i = 0; i < fi && i < n; i++) d[i] *= i / fi;
+    for (let i = 0; i < fo && i < n; i++) d[n - 1 - i] *= i / fo;
+  }
+  const wav = toWav(piece);
+  const dataUrl = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result); fr.onerror = () => rej(fr.error);
+    fr.readAsDataURL(wav);
+  });
+  return String(dataUrl).split(',')[1];
+}
+
+let dontSyncTimer = null, dontSyncing = false, dontSyncAgain = false;
+function scheduleDontSync() {
+  if (!DontNative || !prefs.get('dont', false)) return;
+  clearTimeout(dontSyncTimer);
+  dontSyncTimer = setTimeout(syncDont, 1200);
+}
+async function syncDont() {
+  if (!DontNative) return;
+  if (dontSyncing) { dontSyncAgain = true; return; }
+  dontSyncing = true;
+  try {
+    const items = [];
+    for (const s of sounds) {
+      try { items.push({ id: s.id, name: s.name, data: await renderForDont(s) }); }
+      catch (e) { console.error('DONT! skip', s.name, e); }
+    }
+    await DontNative.setSounds({ items });
+  } catch (e) {
+    console.error(e);
+  } finally {
+    dontSyncing = false;
+    if (dontSyncAgain) { dontSyncAgain = false; syncDont(); }
+  }
+}
+
+function showDontState() {
+  optDont.checked = prefs.get('dont', false);
+  dontTest.hidden = !optDont.checked || !DontNative;
+}
+
+async function turnDontOn() {
+  if (!DontNative) {
+    toast('DONT! only works in the installed app');
+    showDontState();
+    return;
+  }
+  try {
+    const p = await DontNative.notificationPermission();
+    if (!p.granted) toast('Notifications are off, but the sounds will still play');
+  } catch (e) { console.error(e); }
+  prefs.set('dont', true);
+  showDontState();
+  await syncDont();
+  await DontNative.enable({ minutes: DONT_MINUTES });
+  toast(sounds.length ? `DONT! is on. First one in about ${DONT_MINUTES} minutes.` : 'DONT! is on, but your board is empty');
+}
+
+async function turnDontOff() {
+  prefs.set('dont', false);
+  showDontState();
+  if (DontNative) { try { await DontNative.disable(); } catch (e) { console.error(e); } }
+  toast('DONT! is off. Good choice.');
+}
+
+optDont.addEventListener('change', () => {
+  if (optDont.checked) {
+    optDont.checked = false;          // stays off until they confirm
+    dontWarn.hidden = false;
+    buzz(30);
+  } else {
+    turnDontOff();
+  }
+});
+document.getElementById('dontNo').addEventListener('click', () => { dontWarn.hidden = true; showDontState(); });
+document.getElementById('dontYes').addEventListener('click', () => { dontWarn.hidden = true; turnDontOn(); });
+dontTest.addEventListener('click', async e => {
+  e.preventDefault();
+  if (!DontNative) return;
+  await syncDont();
+  try { await DontNative.playNow(); } catch (err) { console.error(err); }
+});
+showDontState();
+// Keep the native copy fresh on every launch, in case sounds changed
+setTimeout(scheduleDontSync, 3000);
 
 /* ---------- Start ---------- */
 (async () => {
