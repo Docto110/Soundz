@@ -54,6 +54,55 @@ const prefs = (() => {
   };
 })();
 
+/* ---------- Appearance: System / Light / Dark + accent color ---------- */
+const ACCENTS = ['#ffd34d', '#ff4d5e', '#f27a35', '#3fb86b', '#22a9a0', '#3a8ee6', '#8b6cff', '#e0558f'];
+const darkMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+function resolvedTheme() {
+  const mode = prefs.get('theme', 'dark');
+  if (mode === 'system') return darkMQ && !darkMQ.matches ? 'light' : 'dark';
+  return mode === 'light' ? 'light' : 'dark';
+}
+
+function onAccentColor(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.4 ? '#17140a' : '#ffffff';
+}
+
+function applyTheme() {
+  const t = resolvedTheme();
+  const root = document.documentElement;
+  root.dataset.theme = t;
+  const accent = prefs.get('accent', ACCENTS[0]);
+  root.style.setProperty('--accent', accent);
+  root.style.setProperty('--on-accent', onAccentColor(accent));
+  const bg = getComputedStyle(root).getPropertyValue('--bg').trim() || '#111114';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', bg);
+  // Status bar icons: dark on light theme, light on dark theme
+  const SB = nativePlugin('StatusBar');
+  if (SB) {
+    SB.setStyle({ style: t === 'light' ? 'LIGHT' : 'DARK' }).catch(() => {});
+    SB.setBackgroundColor({ color: bg }).catch(() => {});
+  }
+  window.dispatchEvent(new Event('soundz-theme'));
+}
+if (darkMQ && darkMQ.addEventListener) darkMQ.addEventListener('change', () => { if (prefs.get('theme', 'dark') === 'system') applyTheme(); });
+
+// Colors for canvas drawing (canvas can't read CSS variables directly)
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = k => cs.getPropertyValue(k).trim();
+  const light = document.documentElement.dataset.theme === 'light';
+  return {
+    light,
+    fg: v('--fg') || '#f2f2f5', bg: v('--bg') || '#111114', line: v('--line') || '#2e2e37',
+    dash: v('--dash') || '#3a3a44', accent: v('--accent') || '#ffd34d',
+    sel: light ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)',
+  };
+}
+
 /* Trim + fade settings for a sound, always valid for its buffer */
 function regionOf(sound, buf) {
   const dur = buf.duration;
@@ -557,6 +606,7 @@ const editor = (() => {
   const GRAB = 30;        // px: how close a finger must be to grab a handle
 
   let sound = null, buf = null, peaks = null, color = '#fff';
+  let T = null;   // theme colors for drawing
   let st = null;          // { start, end, fadeIn, fadeOut } in seconds
   let view = { a: 0, b: 1 };
   let zoomed = false;
@@ -624,6 +674,7 @@ const editor = (() => {
 
   function draw() {
     if (!buf) return;
+    T = themeColors();
     const w = W(), h = H(), k = dpr();
     const band = FADE_BAND * k;
     const mid = band + (h - band) / 2;
@@ -634,7 +685,7 @@ const editor = (() => {
     const xfi = tToX(st.start + st.fadeIn), xfo = tToX(st.end - st.fadeOut);
 
     // Selected region background
-    g.fillStyle = 'rgba(255,255,255,0.04)';
+    g.fillStyle = T.sel;
     g.fillRect(xs, 0, xe - xs, h);
 
     // Fade regions highlighted
@@ -643,7 +694,7 @@ const editor = (() => {
     if (st.fadeOut > 0) g.fillRect(xfo, band, xe - xfo, h - band);
 
     // Center line
-    g.fillStyle = '#2a2a31';
+    g.fillStyle = T.line;
     g.fillRect(0, mid, w, Math.max(1, k));
 
     // Waveform: one column per pixel
@@ -660,7 +711,7 @@ const editor = (() => {
       if (hi < lo) continue;
       const inSel = t >= st.start && t <= st.end;
       if (!inSel) {
-        g.fillStyle = '#3a3a42';
+        g.fillStyle = T.dash;
         g.fillRect(x, mid - hi * amp, 1, Math.max(k, (hi - lo) * amp));
         continue;
       }
@@ -675,7 +726,7 @@ const editor = (() => {
     }
 
     // Fade curves
-    g.strokeStyle = '#ffffff';
+    g.strokeStyle = T.fg;
     g.lineWidth = 2 * k;
     g.beginPath();
     g.moveTo(xs, h);
@@ -686,7 +737,7 @@ const editor = (() => {
 
     // Start / end lines + bottom grab tabs
     for (const x of [xs, xe]) {
-      g.fillStyle = '#ffffff';
+      g.fillStyle = T.fg;
       g.fillRect(x - k, 0, 2 * k, h);
     }
     tab(xs, h, k, 'start');
@@ -702,7 +753,7 @@ const editor = (() => {
       const el = c.currentTime - preview.startedAt;
       if (el >= 0 && el <= preview.region.len) {
         const px = tToX(preview.region.start + el);
-        g.fillStyle = '#ffd34d';
+        g.fillStyle = T.accent;
         g.fillRect(px - k, band, 2 * k, h - band);
       }
     }
@@ -716,11 +767,11 @@ const editor = (() => {
 
   function tab(x, h, k, which) {
     const tw = 22 * k, th = 30 * k;
-    g.fillStyle = drag === which ? '#ffd34d' : '#ffffff';
+    g.fillStyle = drag === which ? T.accent : T.fg;
     const left = which === 'start' ? x - k : x - tw + k;
     roundRect(left, h - th, tw, th, 6 * k);
     g.fill();
-    g.fillStyle = '#111114';
+    g.fillStyle = T.bg;
     const cx = left + tw / 2;
     g.fillRect(cx - 4 * k, h - th / 2 - 6 * k, 1.5 * k, 12 * k);
     g.fillRect(cx + 2.5 * k, h - th / 2 - 6 * k, 1.5 * k, 12 * k);
@@ -728,7 +779,7 @@ const editor = (() => {
 
   function fadeHandle(x, band, k, active) {
     const s = 16 * k;
-    g.fillStyle = active ? '#ffd34d' : '#ffffff';
+    g.fillStyle = active ? T.accent : T.fg;
     roundRect(x - s / 2, band - s - 6 * k, s, s, 4 * k);
     g.fill();
   }
@@ -994,6 +1045,40 @@ const editor = (() => {
 
 function openEditor(sound, o) { return editor.open(sound, o); }
 
+/* ---------- Appearance settings ---------- */
+const themeSeg = document.getElementById('themeSeg');
+const accentSw = document.getElementById('accentSw');
+function showAppearance() {
+  const mode = prefs.get('theme', 'dark');
+  for (const b of themeSeg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.themeOpt === mode));
+  const acc = prefs.get('accent', ACCENTS[0]);
+  for (const b of accentSw.querySelectorAll('.swatch')) {
+    const on = b.dataset.color ? b.dataset.color === acc : !ACCENTS.includes(acc);
+    b.setAttribute('aria-pressed', String(on));
+    if (!b.dataset.color) b.style.background = ACCENTS.includes(acc) ? '' : acc;
+  }
+}
+themeSeg.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  prefs.set('theme', b.dataset.themeOpt); applyTheme(); showAppearance();
+});
+for (const c of ACCENTS) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'swatch'; b.dataset.color = c;
+  b.style.setProperty('--sw', c); b.setAttribute('aria-label', 'Accent ' + c);
+  b.addEventListener('click', () => { prefs.set('accent', c); applyTheme(); showAppearance(); });
+  accentSw.appendChild(b);
+}
+{
+  const lab = document.createElement('label');
+  lab.className = 'swatch custom'; lab.setAttribute('aria-label', 'Custom accent color');
+  const inp = document.createElement('input');
+  inp.type = 'color'; inp.id = 'accentCustom'; inp.value = prefs.get('accent', ACCENTS[0]);
+  inp.addEventListener('input', () => { prefs.set('accent', inp.value); applyTheme(); showAppearance(); });
+  lab.appendChild(inp); accentSw.appendChild(lab);
+}
+showAppearance();
+
 /* ---------- DONT! mode ----------
    Native side (Android) keeps ready-to-play WAVs and an alarm that plays
    a random one every 20 minutes, even when the app is closed. */
@@ -1100,6 +1185,7 @@ showDontState();
 setTimeout(scheduleDontSync, 3000);
 
 /* ---------- Start ---------- */
+applyTheme();
 (async () => {
   try {
     sounds = (await db.all()) || [];

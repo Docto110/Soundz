@@ -190,7 +190,18 @@ function place(h) {
   return [H - h, h];
 }
 
+// In the light theme, white (the default) wouldn't show: draw it dark gray instead
+function forTheme(c) {
+  if (document.documentElement.dataset.theme !== 'light' || !c || c[0] !== '#') return c;
+  const [r, gg, b] = hexRgb(c);
+  return (0.299 * r + 0.587 * gg + 0.114 * b) > 215 ? '#2b2b33' : c;
+}
 function frame(now) {
+  const real = S;
+  S = { ...S, color1: forTheme(S.color1), color2: forTheme(S.color2) };
+  try { frameInner(now); } finally { S = real; }
+}
+function frameInner(now) {
   if (analyser) analyser.smoothingTimeConstant = S.smoothing;
   const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
   g.clearRect(0, 0, W, H);

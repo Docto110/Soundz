@@ -6,6 +6,15 @@
   <meta name="theme-color" content="#111114">
   <title>Soundz</title>
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Set the theme before first paint so there's no flash
+    try {
+      var p = JSON.parse(localStorage.getItem('soundz-prefs') || '{}'), m = p.theme || 'dark';
+      if (m === 'system') m = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = m;
+      if (p.accent) document.documentElement.style.setProperty('--accent', p.accent);
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <div class="app-head">
@@ -28,6 +37,18 @@
   <div id="settings" class="overlay" hidden>
     <div class="sheet">
       <div class="sheet-title">Settings</div>
+      <div class="row stack">
+        <span class="row-title">Appearance</span>
+        <div class="seg3" id="themeSeg" role="group" aria-label="Appearance">
+          <button type="button" data-theme-opt="system">System</button>
+          <button type="button" data-theme-opt="light">Light</button>
+          <button type="button" data-theme-opt="dark">Dark</button>
+        </div>
+      </div>
+      <div class="row stack">
+        <span class="row-title">Accent color</span>
+        <div class="swatches" id="accentSw" role="group" aria-label="Accent color"></div>
+      </div>
       <label class="row">
         <span>
           <span class="row-title">Overlap sounds</span>

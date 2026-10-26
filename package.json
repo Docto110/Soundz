@@ -6,7 +6,8 @@
   "dependencies": {
     "@capacitor/android": "latest",
     "@capacitor/core": "latest",
-    "@capacitor/haptics": "latest"
+    "@capacitor/haptics": "latest",
+    "@capacitor/status-bar": "latest"
   },
   "devDependencies": {
     "@capacitor/cli": "latest"
